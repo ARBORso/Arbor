@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   const { seed_problem, parent_node_id } = await req.json()
 
   const reframingResponse = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5',
     max_tokens: 1000,
     system: `You are a participant in Arbor — a game of collaborative thought. 
 Your role in Phase 1 is to reframe the human's seed problem. 
