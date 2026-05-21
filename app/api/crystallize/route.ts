@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   ).join('\n\n')
 
   const questionResponse = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5',
     max_tokens: 1000,
     system: `You are completing a session of Arbor — a game of collaborative thought.
 
