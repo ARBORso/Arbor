@@ -83,7 +83,6 @@ export default function Home() {
     pivot: '↑',
   }
 
-  // Compute a root path from a starting point and angle
   const computeRootPath = useCallback((
     startX: number,
     startY: number,
@@ -112,10 +111,8 @@ export default function Home() {
         currentAngle += (i % 2 === 0 ? 1 : -1) * goldenAngle * 0.4
       }
 
-      // Organic wobble
       currentAngle += Math.sin(i * 1.7 + sessionIndex) * 0.06
 
-      // Keep growing mostly downward
       const maxDeviation = Math.PI / 2.2
       const downAngle = Math.PI / 2
       if (Math.abs(currentAngle - downAngle) > maxDeviation) {
@@ -146,107 +143,19 @@ export default function Home() {
     const newSeedNodes: SeedNode[] = []
     const newMoveNodes: MoveNode[] = []
     const newRootPaths: RootPath[] = []
+    const movePositionMap = new Map<string, { x: number; y: number; angle: number }>()
 
-    // Separate root sessions from branched sessions
     const rootSessions = sessions.filter(s => !s.parent_move_id && !s.parent_node_id)
     const branchedSessions = sessions.filter(s => s.parent_move_id || s.parent_node_id)
 
-    // Position map: moveId -> { x, y, angle }
-    const movePositionMap = new Map<string, { x: number; y: number; angle: number }>()
-
-    // Layout root sessions first
-    rootSessions.forEach((s, i) => {
-      const sx = rootSessions.length === 1
-        ? width / 2
-        : PADDING + (i / Math.max(rootSessions.length - 1, 1)) * availableWidth
-      const sy = SEED_Y
-
-      const baseAngle = Math.PI / 2
-      const spreadAngle = ((i / Math.max(rootSessions.length - 1, 1)) - 0.5) * (Math.PI * 0.6)
-      const startAngle = baseAngle + spreadAngle
-
-      newSeedNodes.push({
-        kind: 'seed',
-        id: s.id,
-        x: sx,
-        y: sy,
-        session: s,
-        radius: 20,
-      })
-
-      const sessionMoves = moves.filter(m => m.session_id === s.id)
-      const { points, movePositions, moveAngles } = computeRootPath(sx, sy, startAngle, sessionMoves, i, false)
-
-      newRootPaths.push({
-        sessionId: s.id,
-        points,
-        moves: sessionMoves,
-        startX: sx,
-        startY: sy,
-        isBranch: false,
-        branchFromMoveId: null,
-      })
-
-      sessionMoves.forEach((mv, j) => {
-        if (movePositions[j]) {
-          newMoveNodes.push({
-            kind: 'move',
-            id: mv.id,
-            x: movePositions[j].x,
-            y: movePositions[j].y,
-            move: mv,
-            sessionId: s.id,
-            radius: 8,
-            angle: moveAngles[j],
-          })
-          movePositionMap.set(mv.id, {
-            x: movePositions[j].x,
-            y: movePositions[j].y,
-            angle: moveAngles[j],
-          })
-        }
-      })
-    })
-
-    // Layout branched sessions — grow from their parent move position
-    // Sort by depth so parents are processed before children
-    const sorted = [...branchedSessions].sort((a, b) => {
-      const aHasParent = sessions.find(s => s.id === a.parent_node_id)
-      return aHasParent ? 1 : -1
-    })
-
-    sorted.forEach((s, i) => {
-      let startX: number
-      let startY: number
-      let startAngle: number
-      let isBranch = false
-
-      if (s.parent_move_id) {
-        // Branch from specific move
-        const parentPos = movePositionMap.get(s.parent_move_id)
-        if (parentPos) {
-          startX = parentPos.x
-          startY = parentPos.y
-          // Divert at an angle from the parent move's direction
-          const divertDir = i % 2 === 0 ? 1 : -1
-          startAngle = parentPos.angle + divertDir * (Math.PI / 4)
-          isBranch = true
-        } else {
-          startX = width / 2
-          startY = SEED_Y
-          startAngle = Math.PI / 2
-        }
-      } else {
-        // Branch from session node — place near parent seed
-        const parentSeed = newSeedNodes.find(n => n.id === s.parent_node_id)
-        startX = parentSeed ? parentSeed.x + 40 + i * 20 : width / 2
-        startY = SEED_Y
-        startAngle = Math.PI / 2 + 0.3
-        isBranch = false
-      }
-
-      // For move-branched sessions, don't add a seed node at ground level
-      // The branch just grows from the move point
+    const processSession = (
+      s: Session,
+      i: number,
+      isBranch: boolean,
+      startX: number,
+      startY: number,
+      startAngle: number
+    ) => {
       if (!s.parent_move_id) {
         newSeedNodes.push({
           kind: 'seed',
@@ -260,7 +169,7 @@ export default function Home() {
 
       const sessionMoves = moves.filter(m => m.session_id === s.id)
       const { points, movePositions, moveAngles } = computeRootPath(
-        startX, startY, startAngle, sessionMoves, i + rootSessions.length, isBranch
+        startX, startY, startAngle, sessionMoves, i, isBranch
       )
 
       newRootPaths.push({
@@ -282,7 +191,7 @@ export default function Home() {
             y: movePositions[j].y,
             move: mv,
             sessionId: s.id,
-            radius: 7,
+            radius: isBranch ? 7 : 8,
             angle: moveAngles[j],
           })
           movePositionMap.set(mv.id, {
@@ -292,7 +201,51 @@ export default function Home() {
           })
         }
       })
+    }
+
+    // Process root sessions first
+    rootSessions.forEach((s, i) => {
+      const sx = rootSessions.length === 1
+        ? width / 2
+        : PADDING + (i / Math.max(rootSessions.length - 1, 1)) * availableWidth
+      const sy = SEED_Y
+      const baseAngle = Math.PI / 2
+      const spreadAngle = ((i / Math.max(rootSessions.length - 1, 1)) - 0.5) * (Math.PI * 0.6)
+      const startAngle = baseAngle + spreadAngle
+      processSession(s, i, false, sx, sy, startAngle)
     })
+
+    // Process branched sessions iteratively
+    let remaining = [...branchedSessions]
+    let maxIterations = 10
+
+    while (remaining.length > 0 && maxIterations > 0) {
+      maxIterations--
+      const nextRemaining: Session[] = []
+
+      remaining.forEach((s, i) => {
+        if (s.parent_move_id) {
+          const parentPos = movePositionMap.get(s.parent_move_id)
+          if (!parentPos) {
+            nextRemaining.push(s)
+            return
+          }
+          const divertDir = i % 2 === 0 ? 1 : -1
+          const startAngle = parentPos.angle + divertDir * (Math.PI / 3.5)
+          processSession(s, i, true, parentPos.x, parentPos.y, startAngle)
+        } else if (s.parent_node_id) {
+          const parentSeed = newSeedNodes.find(n => n.id === s.parent_node_id)
+          if (!parentSeed) {
+            nextRemaining.push(s)
+            return
+          }
+          const startAngle = Math.PI / 2 + (i % 2 === 0 ? 0.3 : -0.3)
+          processSession(s, i, false, parentSeed.x + (i % 2 === 0 ? 50 : -50), SEED_Y, startAngle)
+        }
+      })
+
+      remaining = nextRemaining
+    }
 
     return { seedNodes: newSeedNodes, moveNodes: newMoveNodes, rootPaths: newRootPaths }
   }, [computeRootPath])
@@ -333,7 +286,7 @@ export default function Home() {
       ctx.stroke()
       ctx.setLineDash([])
 
-      // Draw all root paths
+      // Root paths
       rootPaths.forEach(path => {
         if (path.points.length < 2) return
         const isSessionSelected = selected?.kind === 'seed' && selected.id === path.sessionId
@@ -343,11 +296,11 @@ export default function Home() {
 
         ctx.globalAlpha = isDimmed ? 0.12 : 1
 
-        // Draw junction marker for branches
+        // Junction marker for branches
         if (path.isBranch) {
           ctx.beginPath()
-          ctx.arc(path.startX, path.startY, 3, 0, Math.PI * 2)
-          ctx.fillStyle = isRelated ? 'var(--accent)' : 'rgba(138, 114, 72, 0.6)'
+          ctx.arc(path.startX, path.startY, 3.5, 0, Math.PI * 2)
+          ctx.fillStyle = isRelated ? '#c8a96e' : 'rgba(138, 114, 72, 0.7)'
           ctx.fill()
         }
 
