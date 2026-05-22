@@ -2,8 +2,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { supabase, Session, Move } from '@/lib/supabase'
 
-type NodeShape = { points: { x: number; y: number }[] }
-
 type SeedNode = {
   kind: 'seed'
   id: string
@@ -11,8 +9,6 @@ type SeedNode = {
   y: number
   session: Session
   radius: number
-  shape: NodeShape
-  moves: Move[]
 }
 
 type MoveNode = {
@@ -22,112 +18,15 @@ type MoveNode = {
   y: number
   move: Move
   sessionId: string
-  angle: number
-  length: number
+  radius: number
 }
 
 type AnyNode = SeedNode | MoveNode
-type Link = { source: SeedNode; target: SeedNode }
 
-// Generate branching tree shape from moves
-function generateTreeShape(moves: Move[], radius: number): NodeShape {
-  const points: { x: number; y: number }[] = []
-  const trunk = radius * 0.4
-
-  // Trunk base points
-  points.push({ x: -trunk * 0.3, y: radius * 0.5 })
-  points.push({ x: trunk * 0.3, y: radius * 0.5 })
-
-  // Build branches from moves
-  const extendMoves = moves.filter(m => m.move_type === 'extend')
-  const challengeMoves = moves.filter(m => m.move_type === 'challenge')
-  const pivotMoves = moves.filter(m => m.move_type === 'pivot')
-
-  // Extend moves grow upward
-  extendMoves.forEach((_, i) => {
-    const t = (i + 1) / (extendMoves.length + 1)
-    const h = radius * (0.4 - t * 0.8)
-    const spread = trunk * (1 - t * 0.6)
-    points.push({ x: spread, y: h })
-    points.push({ x: -spread, y: h - radius * 0.15 })
-  })
-
-  // Challenge moves grow sideways
-  challengeMoves.forEach((_, i) => {
-    const side = i % 2 === 0 ? 1 : -1
-    const t = (i + 1) / (challengeMoves.length + 1)
-    points.push({ x: side * radius * (0.6 + t * 0.3), y: -radius * 0.1 * t })
-    points.push({ x: side * radius * 0.4, y: -radius * 0.3 })
-  })
-
-  // Pivot moves grow at unexpected angles
-  pivotMoves.forEach((_, i) => {
-    const angle = (i * 137.5 * Math.PI) / 180 // golden angle
-    const r = radius * (0.5 + i * 0.1)
-    points.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) - radius * 0.1 })
-  })
-
-  // Always add a crown
-  const crownPoints = 5
-  for (let i = 0; i < crownPoints; i++) {
-    const a = (i / crownPoints) * Math.PI * 2 - Math.PI / 2
-    const r = radius * (0.7 + Math.sin(i * 2.3) * 0.2)
-    points.push({ x: r * Math.cos(a) * 0.8, y: r * Math.sin(a) - radius * 0.1 })
-  }
-
-  return { points }
-}
-
-// Draw organic blob for move nodes
-function drawBlob(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, seed: number) {
-  const points = 8
-  ctx.beginPath()
-  for (let i = 0; i <= points; i++) {
-    const angle = (i / points) * Math.PI * 2
-    const noise = 0.7 + 0.3 * Math.sin(seed + i * 2.1) * Math.cos(seed * 0.7 + i)
-    const px = x + r * noise * Math.cos(angle)
-    const py = y + r * noise * Math.sin(angle)
-    if (i === 0) ctx.moveTo(px, py)
-    else ctx.lineTo(px, py)
-  }
-  ctx.closePath()
-}
-
-// Draw tree shape
-function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, shape: NodeShape, scale = 1) {
-  if (shape.points.length < 3) return
-  const hull = convexHull(shape.points)
-  if (hull.length < 3) return
-
-  ctx.beginPath()
-  // Smooth the hull with bezier curves
-  for (let i = 0; i < hull.length; i++) {
-    const curr = hull[i]
-    const next = hull[(i + 1) % hull.length]
-    const mid = { x: (curr.x + next.x) / 2, y: (curr.y + next.y) / 2 }
-    if (i === 0) ctx.moveTo(x + curr.x * scale, y + curr.y * scale)
-    ctx.quadraticCurveTo(x + curr.x * scale, y + curr.y * scale, x + mid.x * scale, y + mid.y * scale)
-  }
-  ctx.closePath()
-}
-
-// Simple convex hull (Graham scan simplified)
-function convexHull(points: { x: number; y: number }[]) {
-  if (points.length < 3) return points
-  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y)
-  const cross = (O: any, A: any, B: any) => (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x)
-  const lower: any[] = []
-  for (const p of sorted) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop()
-    lower.push(p)
-  }
-  const upper: any[] = []
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const p = sorted[i]
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop()
-    upper.push(p)
-  }
-  return [...lower.slice(0, -1), ...upper.slice(0, -1)]
+type RootPath = {
+  sessionId: string
+  points: { x: number; y: number }[]
+  moves: Move[]
 }
 
 export default function Home() {
@@ -135,7 +34,8 @@ export default function Home() {
   const [allMoves, setAllMoves] = useState<Move[]>([])
   const [seedNodes, setSeedNodes] = useState<SeedNode[]>([])
   const [moveNodes, setMoveNodes] = useState<MoveNode[]>([])
-  const [links, setLinks] = useState<Link[]>([])
+  const [rootPaths, setRootPaths] = useState<RootPath[]>([])
+  const [links, setLinks] = useState<{ source: SeedNode; target: SeedNode }[]>([])
   const [selected, setSelected] = useState<AnyNode | null>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [zoom, setZoom] = useState(1)
@@ -167,20 +67,79 @@ export default function Home() {
     setAllMoves(m || [])
   }
 
+  // Compute root path for a session's moves
+  // Each move type bends the root differently
+  const computeRootPath = (
+    startX: number,
+    startY: number,
+    moves: Move[],
+    sessionIndex: number,
+    totalSessions: number
+  ): { points: { x: number; y: number }[]; movePositions: { x: number; y: number }[] } => {
+    const points: { x: number; y: number }[] = [{ x: startX, y: startY }]
+    const movePositions: { x: number; y: number }[] = []
+
+    // Base direction — roots grow downward, spread based on session position
+    const baseAngle = Math.PI / 2 // straight down
+    const spreadAngle = ((sessionIndex / Math.max(totalSessions - 1, 1)) - 0.5) * (Math.PI * 0.6)
+    let currentAngle = baseAngle + spreadAngle
+    let currentX = startX
+    let currentY = startY
+    const segmentLength = 45
+
+    moves.forEach((mv, i) => {
+      // Each move type bends the angle differently
+      if (mv.move_type === 'extend') {
+        // Extend: continues forward with slight drift toward center
+        const drift = -spreadAngle * 0.15
+        currentAngle += drift
+      } else if (mv.move_type === 'challenge') {
+        // Challenge: sharp bend, hits resistance
+        const bendDir = (sessionIndex % 2 === 0 ? 1 : -1) * (i % 2 === 0 ? 1 : -1)
+        currentAngle += bendDir * (Math.PI / 5)
+      } else if (mv.move_type === 'pivot') {
+        // Pivot: sudden direction change at golden angle
+        const goldenAngle = 2.399
+        currentAngle += (i % 2 === 0 ? 1 : -1) * goldenAngle * 0.4
+      }
+
+      // Add some organic wobble
+      const wobble = Math.sin(i * 1.7 + sessionIndex) * 0.08
+      currentAngle += wobble
+
+      // Keep roots growing mostly downward
+      const maxDeviation = Math.PI / 2.5
+      const downAngle = Math.PI / 2
+      if (Math.abs(currentAngle - downAngle) > maxDeviation) {
+        currentAngle = downAngle + Math.sign(currentAngle - downAngle) * maxDeviation
+      }
+
+      currentX += segmentLength * Math.cos(currentAngle)
+      currentY += segmentLength * Math.sin(currentAngle)
+
+      points.push({ x: currentX, y: currentY })
+      movePositions.push({ x: currentX, y: currentY })
+    })
+
+    return { points, movePositions }
+  }
+
   const computeLayout = useCallback((sessions: Session[], moves: Move[], width: number, height: number) => {
-    const cx = width / 2
-    const cy = height / 2
-    const orbitRadius = Math.min(width, height) * 0.32
+    // Seeds sit at the top, spread horizontally
+    const SEED_Y = 100
+    const PADDING = 80
+    const availableWidth = width - PADDING * 2
+
     const newSeedNodes: SeedNode[] = []
     const newMoveNodes: MoveNode[] = []
-    const newLinks: Link[] = []
+    const newRootPaths: RootPath[] = []
+    const newLinks: { source: SeedNode; target: SeedNode }[] = []
 
     sessions.forEach((s, i) => {
-      const angle = (i / sessions.length) * Math.PI * 2 - Math.PI / 2
-      const sx = cx + orbitRadius * Math.cos(angle)
-      const sy = cy + orbitRadius * Math.sin(angle)
-      const sessionMoves = moves.filter(m => m.session_id === s.id)
-      const radius = 32 + sessionMoves.length * 2
+      const sx = sessions.length === 1
+        ? width / 2
+        : PADDING + (i / (sessions.length - 1)) * availableWidth
+      const sy = SEED_Y
 
       const seedNode: SeedNode = {
         kind: 'seed',
@@ -188,30 +147,36 @@ export default function Home() {
         x: sx,
         y: sy,
         session: s,
-        radius,
-        shape: generateTreeShape(sessionMoves, radius),
-        moves: sessionMoves,
+        radius: 20,
       }
       newSeedNodes.push(seedNode)
 
-      // Move nodes as branches
+      const sessionMoves = moves.filter(m => m.session_id === s.id)
+
+      const { points, movePositions } = computeRootPath(sx, sy, sessionMoves, i, sessions.length)
+
+      newRootPaths.push({
+        sessionId: s.id,
+        points,
+        moves: sessionMoves,
+      })
+
       sessionMoves.forEach((mv, j) => {
-        const branchAngle = angle + ((j - (sessionMoves.length - 1) / 2) * 0.4)
-        const branchLength = radius + 30 + j * 8
-        newMoveNodes.push({
-          kind: 'move',
-          id: mv.id,
-          x: sx + branchLength * Math.cos(branchAngle),
-          y: sy + branchLength * Math.sin(branchAngle),
-          move: mv,
-          sessionId: s.id,
-          angle: branchAngle,
-          length: branchLength,
-        })
+        if (movePositions[j]) {
+          newMoveNodes.push({
+            kind: 'move',
+            id: mv.id,
+            x: movePositions[j].x,
+            y: movePositions[j].y,
+            move: mv,
+            sessionId: s.id,
+            radius: 8,
+          })
+        }
       })
     })
 
-    // Links between connected sessions
+    // Links between parent-child sessions at seed level
     sessions.forEach(s => {
       if (s.parent_node_id) {
         const source = newSeedNodes.find(n => n.id === s.parent_node_id)
@@ -220,13 +185,14 @@ export default function Home() {
       }
     })
 
-    return { seedNodes: newSeedNodes, moveNodes: newMoveNodes, links: newLinks }
-  }, [])
+    return { seedNodes: newSeedNodes, moveNodes: newMoveNodes, rootPaths: newRootPaths, links: newLinks }
+  }, [computeRootPath])
 
   useEffect(() => {
-    const { seedNodes: sn, moveNodes: mn, links: l } = computeLayout(sessions, allMoves, dimensions.width, dimensions.height)
+    const { seedNodes: sn, moveNodes: mn, rootPaths: rp, links: l } = computeLayout(sessions, allMoves, dimensions.width, dimensions.height)
     setSeedNodes(sn)
     setMoveNodes(mn)
+    setRootPaths(rp)
     setLinks(l)
     seedNodesRef.current = sn
     moveNodesRef.current = mn
@@ -255,109 +221,107 @@ export default function Home() {
       ctx.translate(pan.x, pan.y)
       ctx.scale(zoom, zoom)
 
-      // Draw parent-child links
+      // Ground line — where seeds sit
+      ctx.beginPath()
+      ctx.moveTo(-2000, 108)
+      ctx.lineTo(2000, 108)
+      ctx.strokeStyle = 'rgba(42, 42, 38, 0.4)'
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 8])
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      // Draw parent-child links between seeds (above ground)
       links.forEach(link => {
         ctx.beginPath()
-        const cp1x = link.source.x
-        const cp1y = link.source.y + (link.target.y - link.source.y) * 0.5
-        const cp2x = link.target.x
-        const cp2y = link.source.y + (link.target.y - link.source.y) * 0.5
-        ctx.moveTo(link.source.x, link.source.y)
-        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, link.target.x, link.target.y)
-        ctx.strokeStyle = 'rgba(138, 114, 72, 0.4)'
-        ctx.lineWidth = 2
+        const midY = link.source.y - 40
+        ctx.moveTo(link.source.x, link.source.y - link.source.radius)
+        ctx.quadraticCurveTo(
+          (link.source.x + link.target.x) / 2, midY,
+          link.target.x, link.target.y - link.target.radius
+        )
+        ctx.strokeStyle = 'rgba(138, 114, 72, 0.5)'
+        ctx.lineWidth = 1.5
         ctx.stroke()
       })
 
-      // Draw move branches as organic lines from seed
-      moveNodes.forEach(mv => {
-        const parent = seedNodesRef.current.find(s => s.id === mv.sessionId)
-        if (!parent) return
-        const isSelectedMove = selected?.id === mv.id
-        const parentSelected = selected?.kind === 'seed' && selected.id === mv.sessionId
-        const color = MOVE_COLORS[mv.move.move_type] || '#4a4a44'
+      // Draw root paths
+      rootPaths.forEach(path => {
+        if (path.points.length < 2) return
+        const isSessionSelected = selected?.kind === 'seed' && selected.id === path.sessionId
+        const isMoveSelected = selected?.kind === 'move' && selected.sessionId === path.sessionId
+        const isRelated = isSessionSelected || isMoveSelected
+        const isDimmed = selected && !isRelated
 
-        ctx.beginPath()
-        // Organic curved branch
-        const ctrl1x = parent.x + (mv.x - parent.x) * 0.3 + Math.sin(mv.angle) * 15
-        const ctrl1y = parent.y + (mv.y - parent.y) * 0.3 - Math.cos(mv.angle) * 15
-        ctx.moveTo(parent.x, parent.y)
-        ctx.quadraticCurveTo(ctrl1x, ctrl1y, mv.x, mv.y)
-        ctx.strokeStyle = isSelectedMove || parentSelected
-          ? color
-          : 'rgba(42, 42, 38, 0.6)'
-        ctx.lineWidth = isSelectedMove ? 2 : 1
-        ctx.stroke()
-      })
+        ctx.globalAlpha = isDimmed ? 0.15 : 1
 
-      // Draw seed nodes as organic tree shapes
-      seedNodes.forEach(node => {
-        const isSelected = selected?.kind === 'seed' && selected.id === node.id
-        const isDimmed = selected && selected.kind === 'seed' && selected.id !== node.id
+        // Draw the root as a tapering line with move colors
+        for (let i = 0; i < path.points.length - 1; i++) {
+          const from = path.points[i]
+          const to = path.points[i + 1]
+          const move = path.moves[i]
+          const color = move ? MOVE_COLORS[move.move_type] || '#3a3a36' : '#2a2a26'
+          const alpha = isRelated ? 0.9 : 0.5
+          const width = Math.max(0.5, 3 - i * 0.3)
 
-        ctx.globalAlpha = isDimmed ? 0.3 : 1
-
-        // Glow
-        if (isSelected || node.session.status === 'complete') {
-          const glow = ctx.createRadialGradient(node.x, node.y, node.radius * 0.5, node.x, node.y, node.radius * 1.8)
-          glow.addColorStop(0, node.session.status === 'complete'
-            ? 'rgba(200, 169, 110, 0.2)'
-            : 'rgba(138, 133, 120, 0.1)')
-          glow.addColorStop(1, 'rgba(0,0,0,0)')
           ctx.beginPath()
-          ctx.arc(node.x, node.y, node.radius * 1.8, 0, Math.PI * 2)
-          ctx.fillStyle = glow
-          ctx.fill()
+          ctx.moveTo(from.x, from.y)
+
+          // Smooth curve to next point
+          if (i < path.points.length - 2) {
+            const next = path.points[i + 2]
+            const cpx = to.x
+            const cpy = to.y
+            ctx.quadraticCurveTo(cpx, cpy, (to.x + next.x) / 2, (to.y + next.y) / 2)
+          } else {
+            ctx.lineTo(to.x, to.y)
+          }
+
+          ctx.strokeStyle = isRelated ? color : `rgba(42, 42, 38, 0.8)`
+          ctx.lineWidth = width
+          ctx.stroke()
+
+          // Fine root hairs at the end of each segment
+          if (i === path.points.length - 2) {
+            for (let h = 0; h < 3; h++) {
+              const hairAngle = Math.atan2(to.y - from.y, to.x - from.x) + (h - 1) * 0.4
+              const hairLen = 8 + h * 4
+              ctx.beginPath()
+              ctx.moveTo(to.x, to.y)
+              ctx.lineTo(
+                to.x + hairLen * Math.cos(hairAngle),
+                to.y + hairLen * Math.sin(hairAngle)
+              )
+              ctx.strokeStyle = `rgba(42, 42, 38, 0.4)`
+              ctx.lineWidth = 0.5
+              ctx.stroke()
+            }
+          }
         }
-
-        // Draw tree shape
-        drawTree(ctx, node.x, node.y, node.shape)
-        ctx.fillStyle = node.session.status === 'complete' ? '#1a1a14' : '#0f0f0d'
-        ctx.fill()
-        ctx.strokeStyle = isSelected ? '#c8a96e'
-          : node.session.status === 'complete' ? '#8a7248' : '#2a2a26'
-        ctx.lineWidth = isSelected ? 2 : 1
-        ctx.stroke()
-
-        // Inner mark
-        ctx.fillStyle = node.session.status === 'complete' ? '#c8a96e' : '#3a3a36'
-        ctx.font = node.session.status === 'complete' ? '500 11px DM Mono, monospace' : '400 9px DM Mono, monospace'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(node.session.status === 'complete' ? '◆' : '·', node.x, node.y)
-
-        // Label
-        const label = node.session.seed_problem.length > 22
-          ? node.session.seed_problem.slice(0, 22) + '...'
-          : node.session.seed_problem
-        ctx.fillStyle = isSelected ? '#8a8578' : '#3a3a36'
-        ctx.font = '400 9px DM Mono, monospace'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'top'
-        ctx.fillText(label, node.x, node.y + node.radius + 10)
 
         ctx.globalAlpha = 1
       })
 
-      // Draw move nodes as organic blobs
+      // Draw move nodes along the roots
       moveNodes.forEach(node => {
         const isSelected = selected?.id === node.id
-        const parentSelected = selected?.kind === 'seed' && selected.id === node.sessionId
+        const parentSelected = (selected?.kind === 'seed' && selected.id === node.sessionId) ||
+          (selected?.kind === 'move' && selected.sessionId === node.sessionId)
         const isDimmed = selected && !isSelected && !parentSelected
 
-        ctx.globalAlpha = isDimmed ? 0.1 : parentSelected ? 0.9 : 0.6
+        ctx.globalAlpha = isDimmed ? 0.1 : parentSelected ? 1 : 0.7
 
         const color = MOVE_COLORS[node.move.move_type] || '#4a4a44'
-        const blobSeed = node.id.charCodeAt(0) + node.id.charCodeAt(1)
 
-        drawBlob(ctx, node.x, node.y, 8, blobSeed)
-        ctx.fillStyle = isSelected ? color + '44' : '#111110'
+        // Small organic node
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
+        ctx.fillStyle = isSelected ? color + '33' : '#0f0f0d'
         ctx.fill()
         ctx.strokeStyle = isSelected || parentSelected ? color : '#2a2a26'
         ctx.lineWidth = isSelected ? 1.5 : 0.8
         ctx.stroke()
 
-        // Move symbol
         const symbols: Record<string, string> = { extend: '→', challenge: '↔', pivot: '↑' }
         ctx.fillStyle = parentSelected || isSelected ? color : '#3a3a36'
         ctx.font = '400 7px DM Mono, monospace'
@@ -368,21 +332,73 @@ export default function Home() {
         ctx.globalAlpha = 1
       })
 
+      // Draw seed nodes at ground level
+      seedNodes.forEach(node => {
+        const isSelected = selected?.kind === 'seed' && selected.id === node.id
+        const isDimmed = selected && selected.kind === 'seed' && selected.id !== node.id
+
+        ctx.globalAlpha = isDimmed ? 0.3 : 1
+
+        // Glow for complete
+        if (node.session.status === 'complete') {
+          const glow = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, node.radius * 2.5)
+          glow.addColorStop(0, 'rgba(200, 169, 110, 0.25)')
+          glow.addColorStop(1, 'rgba(200, 169, 110, 0)')
+          ctx.beginPath()
+          ctx.arc(node.x, node.y, node.radius * 2.5, 0, Math.PI * 2)
+          ctx.fillStyle = glow
+          ctx.fill()
+        }
+
+        // Seed shape — small oval sitting on the ground line
+        ctx.beginPath()
+        ctx.ellipse(node.x, node.y, node.radius * 0.7, node.radius, 0, 0, Math.PI * 2)
+        ctx.fillStyle = node.session.status === 'complete' ? '#1a1a14' : '#111110'
+        ctx.fill()
+        ctx.strokeStyle = isSelected ? '#c8a96e'
+          : node.session.status === 'complete' ? '#8a7248' : '#3a3a36'
+        ctx.lineWidth = isSelected ? 2 : 1.5
+        ctx.stroke()
+
+        // Mark
+        ctx.fillStyle = node.session.status === 'complete' ? '#c8a96e' : '#4a4a44'
+        ctx.font = node.session.status === 'complete' ? '500 10px DM Mono, monospace' : '400 8px DM Mono, monospace'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(node.session.status === 'complete' ? '◆' : '·', node.x, node.y)
+
+        // Label above seed
+        const label = node.session.seed_problem.length > 20
+          ? node.session.seed_problem.slice(0, 20) + '...'
+          : node.session.seed_problem
+        ctx.fillStyle = isSelected ? '#8a8578' : '#3a3a36'
+        ctx.font = '400 9px DM Mono, monospace'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'bottom'
+        ctx.fillText(label, node.x, node.y - node.radius - 6)
+
+        ctx.globalAlpha = 1
+      })
+
       ctx.restore()
       animRef.current = requestAnimationFrame(draw)
     }
 
     animRef.current = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(animRef.current)
-  }, [seedNodes, moveNodes, links, selected, dimensions, zoom, pan])
+  }, [seedNodes, moveNodes, rootPaths, links, selected, dimensions, zoom, pan])
 
   const toWorld = (x: number, y: number) => ({ x: (x - pan.x) / zoom, y: (y - pan.y) / zoom })
 
   const getNodeAt = (cx: number, cy: number): AnyNode | undefined => {
     const w = toWorld(cx, cy)
-    const seed = seedNodesRef.current.find(n => Math.sqrt((n.x - w.x) ** 2 + (n.y - w.y) ** 2) < n.radius + 10)
+    const seed = seedNodesRef.current.find(n =>
+      Math.sqrt(((n.x - w.x) / 0.7) ** 2 + (n.y - w.y) ** 2) < n.radius + 8
+    )
     if (seed) return seed
-    return moveNodesRef.current.find(n => Math.sqrt((n.x - w.x) ** 2 + (n.y - w.y) ** 2) < 14)
+    return moveNodesRef.current.find(n =>
+      Math.sqrt((n.x - w.x) ** 2 + (n.y - w.y) ** 2) < n.radius + 8
+    )
   }
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -411,6 +427,10 @@ export default function Home() {
     setSelected(node || null)
   }
 
+  const selectedMoves = selected?.kind === 'seed'
+    ? allMoves.filter(m => m.session_id === selected.id)
+    : selected?.kind === 'move' ? [selected.move] : []
+
   return (
     <div style={{ width: '100vw', height: '100vh', background: 'var(--bg)', overflow: 'hidden', position: 'relative' }}>
 
@@ -432,7 +452,7 @@ export default function Home() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><span style={{ color: '#9e6e6e' }}>↔</span> CHALLENGE</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><span style={{ color: '#7a6e9e' }}>↑</span> PIVOT</div>
         <div style={{ marginTop: '0.5rem' }}>
-          <a href="/relatability" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>RELATABILITY MAP →</a>
+          <a href="/relatability" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>RELATABILITY →</a>
         </div>
       </div>
 
@@ -472,8 +492,14 @@ export default function Home() {
             {selected.kind === 'seed' ? selected.session.seed_problem : selected.move.content}
           </div>
 
+          {selected.kind === 'seed' && selected.session.seed_reframing && (
+            <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.8rem', marginBottom: '0.75rem', lineHeight: '1.5', borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
+              ↳ {selected.session.seed_reframing}
+            </div>
+          )}
+
           {selected.kind === 'seed' && selected.session.node_statement && (
-            <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.82rem', marginBottom: '0.75rem', lineHeight: '1.5', borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
+            <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.82rem', marginBottom: '0.5rem', lineHeight: '1.5', borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
               {selected.session.node_statement}
             </div>
           )}
@@ -484,19 +510,21 @@ export default function Home() {
             </div>
           )}
 
-          {selected.kind === 'seed' && selected.moves.length > 0 && (
+          {/* Move flow */}
+          {selectedMoves.length > 0 && (
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
               <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.58rem', color: 'var(--text-muted)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
-                {selected.moves.length} MOVES
+                ROOT FLOW — {selectedMoves.length} MOVES
               </div>
-              {selected.moves.map((mv, i) => {
-                const color = { extend: '#6e9e8a', challenge: '#9e6e6e', pivot: '#7a6e9e' }[mv.move_type] || '#4a4a44'
+              {selectedMoves.map((mv, i) => {
+                const color = MOVE_COLORS[mv.move_type] || '#4a4a44'
                 const symbol = { extend: '→', challenge: '↔', pivot: '↑' }[mv.move_type] || '·'
+                const isThisMove = selected.kind === 'move' && selected.id === mv.id
                 return (
-                  <div key={mv.id} style={{ marginBottom: '0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                  <div key={mv.id} style={{ marginBottom: '0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-start', opacity: isThisMove ? 1 : 0.7 }}>
                     <span style={{ color, fontFamily: 'DM Mono, monospace', fontSize: '0.7rem', flexShrink: 0, marginTop: '0.1rem' }}>{symbol}</span>
                     <div style={{ color: mv.role === 'human' ? 'var(--text-secondary)' : 'var(--text-muted)', fontSize: '0.78rem', lineHeight: '1.4', fontStyle: mv.role === 'ai' ? 'italic' : 'normal' }}>
-                      {mv.content.length > 60 ? mv.content.slice(0, 60) + '...' : mv.content}
+                      {mv.content.length > 70 ? mv.content.slice(0, 70) + '...' : mv.content}
                     </div>
                   </div>
                 )
