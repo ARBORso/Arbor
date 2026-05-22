@@ -4,26 +4,35 @@ import { supabase, Move } from '@/lib/supabase'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+async function withRetry<T>(fn: () => Promise<T>, retries = 4, delay = 3000): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn()
+    } catch (e: any) {
+      if ((e?.status === 529 || e?.status === 500) && i < retries - 1) {
+        await new Promise(res => setTimeout(res, delay))
+        continue
+      }
+      throw e
+    }
+  }
+  throw new Error('Max retries exceeded')
+}
+
 export async function POST(req: NextRequest) {
   const { session_id } = await req.json()
 
   const { data: session } = await supabase
-    .from('sessions')
-    .select('*')
-    .eq('id', session_id)
-    .single()
+    .from('sessions').select('*').eq('id', session_id).single()
 
   const { data: moves } = await supabase
-    .from('moves')
-    .select('*')
-    .eq('session_id', session_id)
-    .order('turn', { ascending: true })
+    .from('moves').select('*').eq('session_id', session_id).order('turn', { ascending: true })
 
   const movesSummary = (moves || []).map((m: Move) =>
     `[${m.role.toUpperCase()} - ${m.move_type.toUpperCase()}] ${m.content}`
   ).join('\n\n')
 
-  const response = await anthropic.messages.create({
+  const response = await withRetry(() => anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1000,
     system: `You are completing a session of Arbor — a game of collaborative thought.
@@ -44,7 +53,7 @@ Reframing: "${session?.seed_reframing}"
 Full exchange:
 ${movesSummary}`
     }]
-  })
+  }))
 
   const text = response.content[0].type === 'text' ? response.content[0].text : '{}'
   const clean = text.replace(/```json|```/g, '').trim()
