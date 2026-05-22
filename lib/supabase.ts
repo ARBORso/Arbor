@@ -24,6 +24,7 @@ export type Session = {
   node_statement: string | null
   open_question: string | null
   parent_node_id: string | null
+  parent_move_id: string | null
   status: 'seeding' | 'exchange' | 'crystallization' | 'complete'
   moves: Move[]
   created_at: string
