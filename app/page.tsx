@@ -158,7 +158,6 @@ export default function Home() {
       startY: number,
       startAngle: number
     ) => {
-      // Only draw a seed node if this is NOT a move branch
       if (!isMoveBranch) {
         newSeedNodes.push({
           kind: 'seed',
@@ -219,7 +218,7 @@ export default function Home() {
       processSession(s, i, false, false, sx, sy, startAngle)
     })
 
-    // Process branched sessions iteratively until all placed
+    // Process branched sessions iteratively
     let remaining = [...branchedSessions]
     let maxIterations = 10
 
@@ -229,20 +228,29 @@ export default function Home() {
 
       remaining.forEach((s, i) => {
         if (s.parent_move_id) {
-          // Branch from a specific move point
           const parentPos = movePositionMap.get(s.parent_move_id)
           if (!parentPos) {
-            nextRemaining.push(s)
+            if (maxIterations <= 1) {
+              // Parent move not found — fall back to regular seed
+              const sx = PADDING + (newSeedNodes.length * 80)
+              processSession(s, i, false, false, sx, SEED_Y, Math.PI / 2)
+            } else {
+              nextRemaining.push(s)
+            }
             return
           }
           const divertDir = i % 2 === 0 ? 1 : -1
           const startAngle = parentPos.angle + divertDir * (Math.PI / 3.5)
           processSession(s, i, true, true, parentPos.x, parentPos.y, startAngle)
         } else if (s.parent_node_id) {
-          // Branch from a session node
           const parentSeed = newSeedNodes.find(n => n.id === s.parent_node_id)
           if (!parentSeed) {
-            nextRemaining.push(s)
+            if (maxIterations <= 1) {
+              const sx = PADDING + (newSeedNodes.length * 80)
+              processSession(s, i, false, false, sx, SEED_Y, Math.PI / 2)
+            } else {
+              nextRemaining.push(s)
+            }
             return
           }
           const startAngle = Math.PI / 2 + (i % 2 === 0 ? 0.3 : -0.3)
@@ -331,7 +339,6 @@ export default function Home() {
           ctx.lineWidth = width
           ctx.stroke()
 
-          // Root hairs at tip
           if (i === path.points.length - 2) {
             for (let h = 0; h < 3; h++) {
               const hairAngle = Math.atan2(to.y - from.y, to.x - from.x) + (h - 1) * 0.4
