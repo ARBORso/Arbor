@@ -313,6 +313,9 @@ export default function Home() {
       // Root paths
       rootPaths.forEach(path => {
         if (path.points.length < 2) return
+        if (path.isMoveBranch) {
+  console.log('Branch path points:', path.points, 'moves:', path.moves.length)
+}
         const isSessionSelected = selected?.kind === 'seed' && selected.id === path.sessionId
         const isMoveSelected = selected?.kind === 'move' && selected.sessionId === path.sessionId
         const isRelated = isSessionSelected || isMoveSelected
