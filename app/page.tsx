@@ -229,7 +229,9 @@ export default function Home() {
   remaining.forEach((s, i) => {
     if (s.parent_move_id) {
       console.log('Looking for move:', s.parent_move_id, 'Map has:', Array.from(movePositionMap.keys()))
-      const parentPos = movePositionMap.get(s.parent_move_id)
+      const trimmedId = s.parent_move_id.trim()
+      const parentPos = movePositionMap.get(trimmedId) || 
+        Array.from(movePositionMap.entries()).find(([k]) => k.trim() === trimmedId)?.[1]
           if (!parentPos) {
             if (maxIterations <= 1) {
               // Parent move not found — fall back to regular seed
