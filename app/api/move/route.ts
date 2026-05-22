@@ -80,13 +80,5 @@ Rules:
     content: aiContent
   }).select().single()
 
-  const totalTurns = turn + 2
-  if (totalTurns >= 10) {
-    await supabase
-      .from('sessions')
-      .update({ status: 'crystallization' })
-      .eq('id', session_id)
-  }
-
-  return NextResponse.json({ aiMove, isComplete: totalTurns >= 10 })
+return NextResponse.json({ aiMove, isComplete: false })
 }
