@@ -402,9 +402,20 @@ export default function Home() {
   }
 
   const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault()
-    setZoom(z => Math.max(0.2, Math.min(5, z * (e.deltaY > 0 ? 0.9 : 1.1))))
-  }
+  e.preventDefault()
+  const rect = canvasRef.current!.getBoundingClientRect()
+  const mouseX = e.clientX - rect.left
+  const mouseY = e.clientY - rect.top
+  const delta = e.deltaY > 0 ? 0.9 : 1.1
+  setZoom(z => {
+    const newZoom = Math.max(0.2, Math.min(5, z * delta))
+    setPan(p => ({
+      x: mouseX - (mouseX - p.x) * (newZoom / z),
+      y: mouseY - (mouseY - p.y) * (newZoom / z),
+    }))
+    return newZoom
+  })
+}
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect()
