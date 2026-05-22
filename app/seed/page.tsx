@@ -34,19 +34,25 @@ export default function SeedPage() {
   }
 
   const handleStart = async () => {
-    if (!seed.trim()) return
-    setLoading(true)
-    try {
-      const res = await fetch('/api/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          seed_problem: seed.trim(),
-          parent_node_id: parentId || parentSessionId || null,
-          parent_move_id: parentMoveId || null,
-          branch_type: branchType || null,
-        })
+  if (!seed.trim()) return
+  setLoading(true)
+  try {
+    const res = await fetch('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        seed_problem: seed.trim(),
+        parent_node_id: parentId || null,
+        parent_move_id: parentMoveId || null,
+        branch_type: branchType || null,
       })
+    })
+    const session = await res.json()
+    window.location.href = `/session/${session.id}`
+  } catch (e) {
+    setLoading(false)
+  }
+}
       const session = await res.json()
       window.location.href = `/session/${session.id}`
     } catch (e) {
