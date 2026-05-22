@@ -144,6 +144,8 @@ export default function Home() {
     const newSeedNodes: SeedNode[] = []
     const newMoveNodes: MoveNode[] = []
     const newRootPaths: RootPath[] = []
+
+    // Build move position map from ALL moves first
     const movePositionMap = new Map<string, { x: number; y: number; angle: number }>()
 
     const rootSessions = sessions.filter(s => !s.parent_move_id && !s.parent_node_id)
@@ -202,11 +204,12 @@ export default function Home() {
             y: movePositions[j].y,
             angle: moveAngles[j],
           })
+          console.log('Added to map:', mv.id)
         }
       })
     }
 
-    // Process root sessions first
+    // Process ALL root sessions first — fully populate movePositionMap
     rootSessions.forEach((s, i) => {
       const sx = rootSessions.length === 1
         ? width / 2
@@ -218,24 +221,27 @@ export default function Home() {
       processSession(s, i, false, false, sx, sy, startAngle)
     })
 
-    // Process branched sessions iteratively
+    console.log('After root sessions, map size:', movePositionMap.size)
+
+    // Now process branched sessions — map is fully populated
     let remaining = [...branchedSessions]
     let maxIterations = 10
-    console.log('Iteration', 10 - maxIterations, 'remaining:', remaining.length, 'map size:', movePositionMap.size)
 
     while (remaining.length > 0 && maxIterations > 0) {
-  maxIterations--
-  const nextRemaining: Session[] = []
+      maxIterations--
+      console.log('Iteration', 10 - maxIterations, 'remaining:', remaining.length, 'map size:', movePositionMap.size)
+      const nextRemaining: Session[] = []
 
-  remaining.forEach((s, i) => {
-    if (s.parent_move_id) {
-      console.log('Looking for move:', s.parent_move_id, 'Map has:', Array.from(movePositionMap.keys()))
-      const trimmedId = s.parent_move_id.trim()
-      const parentPos = movePositionMap.get(trimmedId) || 
-        Array.from(movePositionMap.entries()).find(([k]) => k.trim() === trimmedId)?.[1]
+      remaining.forEach((s, i) => {
+        if (s.parent_move_id) {
+          const trimmedId = s.parent_move_id.trim()
+          const parentPos = Array.from(movePositionMap.entries())
+            .find(([k]) => k.trim() === trimmedId)?.[1]
+
+          console.log('Looking for:', trimmedId, '→ found:', !!parentPos)
+
           if (!parentPos) {
             if (maxIterations <= 1) {
-              // Parent move not found — fall back to regular seed
               const sx = PADDING + (newSeedNodes.length * 80)
               processSession(s, i, false, false, sx, SEED_Y, Math.PI / 2)
             } else {
@@ -245,6 +251,7 @@ export default function Home() {
           }
           const divertDir = i % 2 === 0 ? 1 : -1
           const startAngle = parentPos.angle + divertDir * (Math.PI / 3.5)
+          console.log('Branching from position:', parentPos.x, parentPos.y, 'angle:', startAngle)
           processSession(s, i, true, true, parentPos.x, parentPos.y, startAngle)
         } else if (s.parent_node_id) {
           const parentSeed = newSeedNodes.find(n => n.id === s.parent_node_id)
@@ -314,7 +321,6 @@ export default function Home() {
 
         ctx.globalAlpha = isDimmed ? 0.12 : 1
 
-        // Junction marker for move branches
         if (path.isMoveBranch) {
           ctx.beginPath()
           ctx.arc(path.startX, path.startY, 3.5, 0, Math.PI * 2)
