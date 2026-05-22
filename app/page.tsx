@@ -1,20 +1,19 @@
 'use client'
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { supabase, Session } from '@/lib/supabase'
 
 type Node = {
   id: string
   x: number
   y: number
-  vx: number
-  vy: number
   session: Session
   radius: number
+  depth: number
 }
 
 type Link = {
-  source: string
-  target: string
+  source: Node
+  target: Node
 }
 
 export default function Home() {
@@ -26,13 +25,12 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animRef = useRef<number>(0)
   const nodesRef = useRef<Node[]>([])
-  const isDragging = useRef<string | null>(null)
 
   useEffect(() => {
-    const updateDimensions = () => setDimensions({ width: window.innerWidth, height: window.innerHeight })
-    updateDimensions()
-    window.addEventListener('resize', updateDimensions)
-    return () => window.removeEventListener('resize', updateDimensions)
+    const update = () => setDimensions({ width: window.innerWidth, height: window.innerHeight })
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
   }, [])
 
   useEffect(() => {
@@ -46,27 +44,76 @@ export default function Home() {
     if (data) setSessions(data)
   }
 
-  useEffect(() => {
-    const newLinks: Link[] = sessions
-      .filter(s => s.parent_node_id)
-      .map(s => ({ source: s.parent_node_id!, target: s.id }))
-    setLinks(newLinks)
+  // Layout: roots at top, children spread below
+  const computeLayout = useCallback((sessions: Session[], width: number, height: number) => {
+    const roots = sessions.filter(s => !s.parent_node_id)
+    const getChildren = (id: string) => sessions.filter(s => s.parent_node_id === id)
 
-    setNodes(prev => {
-      const existing = new Map(prev.map(n => [n.id, n]))
-      return sessions.map(s => {
-        if (existing.has(s.id)) return { ...existing.get(s.id)!, session: s }
-        return {
+    const newNodes: Node[] = []
+    const newLinks: Link[] = []
+
+    const PADDING_TOP = 120
+    const PADDING_BOTTOM = 100
+    const availableHeight = height - PADDING_TOP - PADDING_BOTTOM
+
+    // BFS to assign depths
+    const depthMap = new Map<string, number>()
+    const queue = roots.map(r => ({ id: r.id, depth: 0 }))
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!
+      depthMap.set(id, depth)
+      getChildren(id).forEach(child => queue.push({ id: child.id, depth: depth + 1 }))
+    }
+
+    const maxDepth = Math.max(...Array.from(depthMap.values()), 0)
+    const depthY = (depth: number) =>
+      PADDING_TOP + (maxDepth === 0 ? availableHeight / 2 : (depth / maxDepth) * availableHeight)
+
+    // Group by depth
+    const byDepth = new Map<number, Session[]>()
+    sessions.forEach(s => {
+      const d = depthMap.get(s.id) ?? 0
+      if (!byDepth.has(d)) byDepth.set(d, [])
+      byDepth.get(d)!.push(s)
+    })
+
+    const nodeMap = new Map<string, Node>()
+
+    byDepth.forEach((group, depth) => {
+      const y = depthY(depth)
+      const spacing = width / (group.length + 1)
+      group.forEach((s, i) => {
+        const node: Node = {
           id: s.id,
-          x: dimensions.width / 2 + (Math.random() - 0.5) * 200,
-          y: dimensions.height / 2 + (Math.random() - 0.5) * 200,
-          vx: 0, vy: 0,
+          x: spacing * (i + 1),
+          y,
           session: s,
           radius: s.status === 'complete' ? 28 : 20,
+          depth,
         }
+        newNodes.push(node)
+        nodeMap.set(s.id, node)
       })
     })
-  }, [sessions, dimensions])
+
+    // Build links
+    sessions.forEach(s => {
+      if (s.parent_node_id) {
+        const source = nodeMap.get(s.parent_node_id)
+        const target = nodeMap.get(s.id)
+        if (source && target) newLinks.push({ source, target })
+      }
+    })
+
+    return { nodes: newNodes, links: newLinks }
+  }, [])
+
+  useEffect(() => {
+    const { nodes: n, links: l } = computeLayout(sessions, dimensions.width, dimensions.height)
+    setNodes(n)
+    setLinks(l)
+    nodesRef.current = n
+  }, [sessions, dimensions, computeLayout])
 
   useEffect(() => { nodesRef.current = nodes }, [nodes])
 
@@ -76,132 +123,93 @@ export default function Home() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const simulate = () => {
-      const ns = [...nodesRef.current]
-      const cx = dimensions.width / 2
-      const cy = dimensions.height / 2
-
-      for (let i = 0; i < ns.length; i++) {
-        if (isDragging.current === ns[i].id) continue
-
-        ns[i].vx += (cx - ns[i].x) * 0.002
-        ns[i].vy += (cy - ns[i].y) * 0.002
-
-        for (let j = 0; j < ns.length; j++) {
-          if (i === j) continue
-          const dx = ns[i].x - ns[j].x
-          const dy = ns[i].y - ns[j].y
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1
-          const minDist = ns[i].radius + ns[j].radius + 60
-          if (dist < minDist) {
-            const force = (minDist - dist) / dist * 0.3
-            ns[i].vx += dx * force
-            ns[i].vy += dy * force
-          }
-        }
-
-        links.forEach(link => {
-          let other: Node | undefined
-          if (link.source === ns[i].id) other = ns.find(n => n.id === link.target)
-          if (link.target === ns[i].id) other = ns.find(n => n.id === link.source)
-          if (other) {
-            const dx = other.x - ns[i].x
-            const dy = other.y - ns[i].y
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1
-            const force = (dist - 140) / dist * 0.05
-            ns[i].vx += dx * force
-            ns[i].vy += dy * force
-          }
-        })
-
-        ns[i].vx *= 0.85
-        ns[i].vy *= 0.85
-        ns[i].x += ns[i].vx
-        ns[i].y += ns[i].vy
-        ns[i].x = Math.max(ns[i].radius + 10, Math.min(dimensions.width - ns[i].radius - 10, ns[i].x))
-        ns[i].y = Math.max(ns[i].radius + 40, Math.min(dimensions.height - ns[i].radius - 80, ns[i].y))
-      }
-
+    const draw = () => {
       ctx.clearRect(0, 0, dimensions.width, dimensions.height)
 
+      // Draw links as curved lines
       links.forEach(link => {
-        const source = ns.find(n => n.id === link.source)
-        const target = ns.find(n => n.id === link.target)
-        if (!source || !target) return
+        const { source, target } = link
+        const cp1x = source.x
+        const cp1y = source.y + (target.y - source.y) * 0.4
+        const cp2x = target.x
+        const cp2y = source.y + (target.y - source.y) * 0.6
+
         ctx.beginPath()
-        ctx.moveTo(source.x, source.y)
-        ctx.lineTo(target.x, target.y)
-        ctx.strokeStyle = 'rgba(42, 42, 38, 0.8)'
-        ctx.lineWidth = 1
+        ctx.moveTo(source.x, source.y + source.radius)
+        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, target.x, target.y - target.radius)
+        ctx.strokeStyle = 'rgba(58, 58, 54, 0.9)'
+        ctx.lineWidth = 1.5
         ctx.stroke()
+
+        // Arrow tip
+        const angle = Math.atan2(target.y - cp2y, target.x - cp2x)
+        ctx.beginPath()
+        ctx.moveTo(target.x - target.radius * Math.cos(angle), target.y - target.radius * Math.sin(angle))
+        ctx.lineTo(
+          target.x - target.radius * Math.cos(angle) - 8 * Math.cos(angle - 0.4),
+          target.y - target.radius * Math.sin(angle) - 8 * Math.sin(angle - 0.4)
+        )
+        ctx.lineTo(
+          target.x - target.radius * Math.cos(angle) - 8 * Math.cos(angle + 0.4),
+          target.y - target.radius * Math.sin(angle) - 8 * Math.sin(angle + 0.4)
+        )
+        ctx.closePath()
+        ctx.fillStyle = 'rgba(58, 58, 54, 0.9)'
+        ctx.fill()
       })
 
-      ns.forEach(node => {
+      // Draw nodes
+      nodes.forEach(node => {
         const isComplete = node.session.status === 'complete'
         const isSelected = selected?.id === node.id
 
+        // Glow
         if (isComplete) {
-          ctx.beginPath()
-          ctx.arc(node.x, node.y, node.radius + 8, 0, Math.PI * 2)
-          const glow = ctx.createRadialGradient(node.x, node.y, node.radius, node.x, node.y, node.radius + 8)
-          glow.addColorStop(0, 'rgba(200, 169, 110, 0.15)')
+          const glow = ctx.createRadialGradient(node.x, node.y, node.radius, node.x, node.y, node.radius + 16)
+          glow.addColorStop(0, 'rgba(200, 169, 110, 0.2)')
           glow.addColorStop(1, 'rgba(200, 169, 110, 0)')
+          ctx.beginPath()
+          ctx.arc(node.x, node.y, node.radius + 16, 0, Math.PI * 2)
           ctx.fillStyle = glow
           ctx.fill()
         }
 
+        // Circle
         ctx.beginPath()
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
         ctx.fillStyle = isComplete ? '#1a1a16' : '#111110'
         ctx.fill()
-        ctx.strokeStyle = isSelected ? '#c8a96e' : isComplete ? '#8a7248' : '#2a2a26'
-        ctx.lineWidth = isSelected ? 2 : 1
+        ctx.strokeStyle = isSelected ? '#c8a96e' : isComplete ? '#8a7248' : '#3a3a36'
+        ctx.lineWidth = isSelected ? 2.5 : 1.5
         ctx.stroke()
 
+        // Icon
         ctx.fillStyle = isComplete ? '#c8a96e' : '#4a4a44'
-        ctx.font = isComplete ? '500 11px DM Mono, monospace' : '400 10px DM Mono, monospace'
+        ctx.font = isComplete ? '500 12px DM Mono, monospace' : '400 10px DM Mono, monospace'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(isComplete ? '◆' : '○', node.x, node.y)
 
-        const label = node.session.seed_problem.length > 24
-          ? node.session.seed_problem.slice(0, 24) + '...'
+        // Seed label
+        const label = node.session.seed_problem.length > 22
+          ? node.session.seed_problem.slice(0, 22) + '...'
           : node.session.seed_problem
-        ctx.fillStyle = '#4a4a44'
+        ctx.fillStyle = isSelected ? '#8a8578' : '#4a4a44'
         ctx.font = '400 9px DM Mono, monospace'
         ctx.textAlign = 'center'
-        ctx.fillText(label, node.x, node.y + node.radius + 12)
+        ctx.textBaseline = 'top'
+        ctx.fillText(label, node.x, node.y + node.radius + 8)
       })
 
-      nodesRef.current = ns
-      animRef.current = requestAnimationFrame(simulate)
+      animRef.current = requestAnimationFrame(draw)
     }
 
-    animRef.current = requestAnimationFrame(simulate)
+    animRef.current = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(animRef.current)
-  }, [links, dimensions, selected])
+  }, [nodes, links, selected, dimensions])
 
   const getNodeAt = (x: number, y: number) =>
-    nodesRef.current.find(n => Math.sqrt((n.x - x) ** 2 + (n.y - y) ** 2) < n.radius + 10)
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    const rect = canvasRef.current!.getBoundingClientRect()
-    const node = getNodeAt(e.clientX - rect.left, e.clientY - rect.top)
-    if (node) { isDragging.current = node.id; setSelected(node.session) }
-  }
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    const rect = canvasRef.current!.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    if (isDragging.current) {
-      nodesRef.current = nodesRef.current.map(n =>
-        n.id === isDragging.current ? { ...n, x, y, vx: 0, vy: 0 } : n
-      )
-    }
-  }
-
-  const handleMouseUp = () => { isDragging.current = null }
+    nodesRef.current.find(n => Math.sqrt((n.x - x) ** 2 + (n.y - y) ** 2) < n.radius + 12)
 
   const handleClick = (e: React.MouseEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect()
@@ -213,12 +221,12 @@ export default function Home() {
     <div style={{ width: '100vw', height: '100vh', background: 'var(--bg)', overflow: 'hidden', position: 'relative' }}>
 
       {/* Header */}
-      <div style={{ position: 'absolute', top: '1.5rem', left: '50%', transform: 'translateX(-50%)', zIndex: 10, textAlign: 'center' }}>
+      <div style={{ position: 'absolute', top: '1.5rem', left: '50%', transform: 'translateX(-50%)', zIndex: 10, textAlign: 'center', pointerEvents: 'none' }}>
         <div style={{ fontSize: '1.4rem', fontWeight: 300, letterSpacing: '0.3em', color: 'var(--text-primary)' }}>ARBOR</div>
         <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.8rem', letterSpacing: '0.05em', marginTop: '0.2rem' }}>Where thinking blossoms into being.</div>
       </div>
 
-      {/* Session count */}
+      {/* Stats */}
       <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', zIndex: 10, fontFamily: 'DM Mono, monospace', fontSize: '0.62rem', color: 'var(--text-muted)', letterSpacing: '0.08em', textAlign: 'right' }}>
         <div>{sessions.length} SESSION{sessions.length !== 1 ? 'S' : ''}</div>
         <div style={{ marginTop: '0.25rem', fontSize: '0.58rem' }}>LIVE</div>
@@ -239,32 +247,32 @@ export default function Home() {
         ref={canvasRef}
         width={dimensions.width}
         height={dimensions.height}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
         onClick={handleClick}
-        style={{ cursor: 'crosshair', display: 'block' }}
+        style={{ cursor: 'pointer', display: 'block' }}
       />
 
       {/* Empty state */}
       {sessions.length === 0 && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none' }}>
           <div style={{ color: 'var(--text-muted)', fontSize: '1rem', marginBottom: '0.5rem' }}>The tree is empty.</div>
           <div style={{ color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', fontSize: '0.7rem' }}>Plant the first seed below.</div>
         </div>
       )}
 
-      {/* Selected node panel */}
+      {/* Selected panel */}
       {selected && (
-        <div style={{ position: 'absolute', bottom: '4rem', right: '1.5rem', width: '300px', background: 'var(--bg-card)', border: '1px solid ' + (selected.status === 'complete' ? 'var(--accent-dim)' : 'var(--border)'), borderRadius: '4px', padding: '1.25rem', zIndex: 10 }}>
-          <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.1em', marginBottom: '0.75rem' }}>
-            {selected.status === 'complete' ? '◆ NODE' : '○ IN PROGRESS'}
+        <div style={{ position: 'absolute', bottom: '4.5rem', right: '1.5rem', width: '300px', background: 'var(--bg-card)', border: '1px solid ' + (selected.status === 'complete' ? 'var(--accent-dim)' : 'var(--border)'), borderRadius: '4px', padding: '1.25rem', zIndex: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+            <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>
+              {selected.status === 'complete' ? '◆ NODE' : '○ IN PROGRESS'}
+            </div>
+            <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'DM Mono, monospace', fontSize: '0.6rem' }}>✕</button>
           </div>
           <div style={{ color: 'var(--text-primary)', fontSize: '0.95rem', marginBottom: '0.75rem', lineHeight: '1.5' }}>
             {selected.seed_problem}
           </div>
           {selected.node_statement && (
-            <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.85rem', marginBottom: '0.75rem', lineHeight: '1.5' }}>
+            <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.85rem', marginBottom: '0.75rem', lineHeight: '1.5', borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
               {selected.node_statement}
             </div>
           )}
@@ -279,7 +287,7 @@ export default function Home() {
               OPEN
             </a>
             {selected.status === 'complete' && (
-              <a href={`/session/new?parent=${selected.id}`}
+              <a href={`/seed?parent=${selected.id}`}
                 style={{ flex: 1, display: 'block', textAlign: 'center', padding: '0.5rem', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent-dim)', borderRadius: '3px', fontFamily: 'DM Mono, monospace', fontSize: '0.6rem', letterSpacing: '0.08em', textDecoration: 'none' }}>
                 BRANCH →
               </a>
@@ -288,7 +296,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Seed button — bottom center */}
+      {/* Seed button */}
       <div style={{ position: 'absolute', bottom: '1.5rem', left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
         <a href="/seed"
           style={{ display: 'block', padding: '0.6rem 2rem', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent-dim)', borderRadius: '3px', fontFamily: 'DM Mono, monospace', fontSize: '0.7rem', letterSpacing: '0.15em', textDecoration: 'none', textAlign: 'center' }}>
