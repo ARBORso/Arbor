@@ -19,7 +19,7 @@ export default function SeedPage() {
     setContext(params.get('context'))
   }, [])
 
-  const isMoveB ranch = !!parentMoveId
+  const isMoveBranch = !!parentMoveId
 
   const MOVE_COLORS: Record<string, string> = {
     extend: '#6e9e8a',
