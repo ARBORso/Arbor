@@ -31,6 +31,7 @@ type RootPath = {
   startX: number
   startY: number
   isBranch: boolean
+  isMoveBranch: boolean
   branchFromMoveId: string | null
 }
 
@@ -152,11 +153,13 @@ export default function Home() {
       s: Session,
       i: number,
       isBranch: boolean,
+      isMoveBranch: boolean,
       startX: number,
       startY: number,
       startAngle: number
     ) => {
-      if (!s.parent_move_id) {
+      // Only draw a seed node if this is NOT a move branch
+      if (!isMoveBranch) {
         newSeedNodes.push({
           kind: 'seed',
           id: s.id,
@@ -179,6 +182,7 @@ export default function Home() {
         startX,
         startY,
         isBranch,
+        isMoveBranch,
         branchFromMoveId: s.parent_move_id,
       })
 
@@ -212,10 +216,10 @@ export default function Home() {
       const baseAngle = Math.PI / 2
       const spreadAngle = ((i / Math.max(rootSessions.length - 1, 1)) - 0.5) * (Math.PI * 0.6)
       const startAngle = baseAngle + spreadAngle
-      processSession(s, i, false, sx, sy, startAngle)
+      processSession(s, i, false, false, sx, sy, startAngle)
     })
 
-    // Process branched sessions iteratively
+    // Process branched sessions iteratively until all placed
     let remaining = [...branchedSessions]
     let maxIterations = 10
 
@@ -225,6 +229,7 @@ export default function Home() {
 
       remaining.forEach((s, i) => {
         if (s.parent_move_id) {
+          // Branch from a specific move point
           const parentPos = movePositionMap.get(s.parent_move_id)
           if (!parentPos) {
             nextRemaining.push(s)
@@ -232,15 +237,16 @@ export default function Home() {
           }
           const divertDir = i % 2 === 0 ? 1 : -1
           const startAngle = parentPos.angle + divertDir * (Math.PI / 3.5)
-          processSession(s, i, true, parentPos.x, parentPos.y, startAngle)
+          processSession(s, i, true, true, parentPos.x, parentPos.y, startAngle)
         } else if (s.parent_node_id) {
+          // Branch from a session node
           const parentSeed = newSeedNodes.find(n => n.id === s.parent_node_id)
           if (!parentSeed) {
             nextRemaining.push(s)
             return
           }
           const startAngle = Math.PI / 2 + (i % 2 === 0 ? 0.3 : -0.3)
-          processSession(s, i, false, parentSeed.x + (i % 2 === 0 ? 50 : -50), SEED_Y, startAngle)
+          processSession(s, i, false, false, parentSeed.x + (i % 2 === 0 ? 50 : -50), SEED_Y, startAngle)
         }
       })
 
@@ -296,8 +302,8 @@ export default function Home() {
 
         ctx.globalAlpha = isDimmed ? 0.12 : 1
 
-        // Junction marker for branches
-        if (path.isBranch) {
+        // Junction marker for move branches
+        if (path.isMoveBranch) {
           ctx.beginPath()
           ctx.arc(path.startX, path.startY, 3.5, 0, Math.PI * 2)
           ctx.fillStyle = isRelated ? '#c8a96e' : 'rgba(138, 114, 72, 0.7)'
@@ -309,7 +315,7 @@ export default function Home() {
           const to = path.points[i + 1]
           const move = path.moves[i]
           const color = move ? MOVE_COLORS[move.move_type] || '#3a3a36' : '#2a2a26'
-          const width = Math.max(0.4, (path.isBranch ? 2 : 3) - i * 0.25)
+          const width = Math.max(0.4, (path.isMoveBranch ? 2 : 3) - i * 0.25)
 
           ctx.beginPath()
           ctx.moveTo(from.x, from.y)
@@ -321,7 +327,7 @@ export default function Home() {
             ctx.lineTo(to.x, to.y)
           }
 
-          ctx.strokeStyle = isRelated ? color : path.isBranch ? 'rgba(58, 58, 54, 0.6)' : 'rgba(42, 42, 38, 0.8)'
+          ctx.strokeStyle = isRelated ? color : path.isMoveBranch ? 'rgba(58, 58, 54, 0.7)' : 'rgba(42, 42, 38, 0.8)'
           ctx.lineWidth = width
           ctx.stroke()
 
