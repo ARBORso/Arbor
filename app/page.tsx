@@ -19,6 +19,7 @@ type MoveNode = {
   move: Move
   sessionId: string
   radius: number
+  angle: number
 }
 
 type AnyNode = SeedNode | MoveNode
@@ -27,6 +28,10 @@ type RootPath = {
   sessionId: string
   points: { x: number; y: number }[]
   moves: Move[]
+  startX: number
+  startY: number
+  isBranch: boolean
+  branchFromMoveId: string | null
 }
 
 export default function Home() {
@@ -35,7 +40,6 @@ export default function Home() {
   const [seedNodes, setSeedNodes] = useState<SeedNode[]>([])
   const [moveNodes, setMoveNodes] = useState<MoveNode[]>([])
   const [rootPaths, setRootPaths] = useState<RootPath[]>([])
-  const [links, setLinks] = useState<{ source: SeedNode; target: SeedNode }[]>([])
   const [selected, setSelected] = useState<AnyNode | null>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [zoom, setZoom] = useState(1)
@@ -67,27 +71,39 @@ export default function Home() {
     setAllMoves(m || [])
   }
 
+  const MOVE_COLORS: Record<string, string> = {
+    extend: '#6e9e8a',
+    challenge: '#9e6e6e',
+    pivot: '#7a6e9e',
+  }
+
+  const MOVE_SYMBOLS: Record<string, string> = {
+    extend: '→',
+    challenge: '↔',
+    pivot: '↑',
+  }
+
+  // Compute a root path from a starting point and angle
   const computeRootPath = useCallback((
     startX: number,
     startY: number,
+    startAngle: number,
     moves: Move[],
     sessionIndex: number,
-    totalSessions: number
+    isBranch: boolean
   ) => {
     const points: { x: number; y: number }[] = [{ x: startX, y: startY }]
     const movePositions: { x: number; y: number }[] = []
+    const moveAngles: number[] = []
 
-    const baseAngle = Math.PI / 2
-    const spreadAngle = ((sessionIndex / Math.max(totalSessions - 1, 1)) - 0.5) * (Math.PI * 0.6)
-    let currentAngle = baseAngle + spreadAngle
+    let currentAngle = startAngle
     let currentX = startX
     let currentY = startY
-    const segmentLength = 45
+    const segmentLength = isBranch ? 38 : 45
 
     moves.forEach((mv, i) => {
       if (mv.move_type === 'extend') {
-        const drift = -spreadAngle * 0.15
-        currentAngle += drift
+        currentAngle += isBranch ? 0.05 : -0.05
       } else if (mv.move_type === 'challenge') {
         const bendDir = (sessionIndex % 2 === 0 ? 1 : -1) * (i % 2 === 0 ? 1 : -1)
         currentAngle += bendDir * (Math.PI / 5)
@@ -96,10 +112,11 @@ export default function Home() {
         currentAngle += (i % 2 === 0 ? 1 : -1) * goldenAngle * 0.4
       }
 
-      const wobble = Math.sin(i * 1.7 + sessionIndex) * 0.08
-      currentAngle += wobble
+      // Organic wobble
+      currentAngle += Math.sin(i * 1.7 + sessionIndex) * 0.06
 
-      const maxDeviation = Math.PI / 2.5
+      // Keep growing mostly downward
+      const maxDeviation = Math.PI / 2.2
       const downAngle = Math.PI / 2
       if (Math.abs(currentAngle - downAngle) > maxDeviation) {
         currentAngle = downAngle + Math.sign(currentAngle - downAngle) * maxDeviation
@@ -110,12 +127,18 @@ export default function Home() {
 
       points.push({ x: currentX, y: currentY })
       movePositions.push({ x: currentX, y: currentY })
+      moveAngles.push(currentAngle)
     })
 
-    return { points, movePositions }
+    return { points, movePositions, moveAngles }
   }, [])
 
-  const computeLayout = useCallback((sessions: Session[], moves: Move[], width: number, height: number) => {
+  const computeLayout = useCallback((
+    sessions: Session[],
+    moves: Move[],
+    width: number,
+    height: number
+  ) => {
     const SEED_Y = 100
     const PADDING = 80
     const availableWidth = width - PADDING * 2
@@ -123,28 +146,46 @@ export default function Home() {
     const newSeedNodes: SeedNode[] = []
     const newMoveNodes: MoveNode[] = []
     const newRootPaths: RootPath[] = []
-    const newLinks: { source: SeedNode; target: SeedNode }[] = []
 
-    sessions.forEach((s, i) => {
-      const sx = sessions.length === 1
+    // Separate root sessions from branched sessions
+    const rootSessions = sessions.filter(s => !s.parent_move_id && !s.parent_node_id)
+    const branchedSessions = sessions.filter(s => s.parent_move_id || s.parent_node_id)
+
+    // Position map: moveId -> { x, y, angle }
+    const movePositionMap = new Map<string, { x: number; y: number; angle: number }>()
+
+    // Layout root sessions first
+    rootSessions.forEach((s, i) => {
+      const sx = rootSessions.length === 1
         ? width / 2
-        : PADDING + (i / (sessions.length - 1)) * availableWidth
+        : PADDING + (i / Math.max(rootSessions.length - 1, 1)) * availableWidth
       const sy = SEED_Y
 
-      const seedNode: SeedNode = {
+      const baseAngle = Math.PI / 2
+      const spreadAngle = ((i / Math.max(rootSessions.length - 1, 1)) - 0.5) * (Math.PI * 0.6)
+      const startAngle = baseAngle + spreadAngle
+
+      newSeedNodes.push({
         kind: 'seed',
         id: s.id,
         x: sx,
         y: sy,
         session: s,
         radius: 20,
-      }
-      newSeedNodes.push(seedNode)
+      })
 
       const sessionMoves = moves.filter(m => m.session_id === s.id)
-      const { points, movePositions } = computeRootPath(sx, sy, sessionMoves, i, sessions.length)
+      const { points, movePositions, moveAngles } = computeRootPath(sx, sy, startAngle, sessionMoves, i, false)
 
-      newRootPaths.push({ sessionId: s.id, points, moves: sessionMoves })
+      newRootPaths.push({
+        sessionId: s.id,
+        points,
+        moves: sessionMoves,
+        startX: sx,
+        startY: sy,
+        isBranch: false,
+        branchFromMoveId: null,
+      })
 
       sessionMoves.forEach((mv, j) => {
         if (movePositions[j]) {
@@ -156,28 +197,111 @@ export default function Home() {
             move: mv,
             sessionId: s.id,
             radius: 8,
+            angle: moveAngles[j],
+          })
+          movePositionMap.set(mv.id, {
+            x: movePositions[j].x,
+            y: movePositions[j].y,
+            angle: moveAngles[j],
           })
         }
       })
     })
 
-    sessions.forEach(s => {
-      if (s.parent_node_id) {
-        const source = newSeedNodes.find(n => n.id === s.parent_node_id)
-        const target = newSeedNodes.find(n => n.id === s.id)
-        if (source && target) newLinks.push({ source, target })
-      }
+    // Layout branched sessions — grow from their parent move position
+    // Sort by depth so parents are processed before children
+    const sorted = [...branchedSessions].sort((a, b) => {
+      const aHasParent = sessions.find(s => s.id === a.parent_node_id)
+      return aHasParent ? 1 : -1
     })
 
-    return { seedNodes: newSeedNodes, moveNodes: newMoveNodes, rootPaths: newRootPaths, links: newLinks }
+    sorted.forEach((s, i) => {
+      let startX: number
+      let startY: number
+      let startAngle: number
+      let isBranch = false
+
+      if (s.parent_move_id) {
+        // Branch from specific move
+        const parentPos = movePositionMap.get(s.parent_move_id)
+        if (parentPos) {
+          startX = parentPos.x
+          startY = parentPos.y
+          // Divert at an angle from the parent move's direction
+          const divertDir = i % 2 === 0 ? 1 : -1
+          startAngle = parentPos.angle + divertDir * (Math.PI / 4)
+          isBranch = true
+        } else {
+          startX = width / 2
+          startY = SEED_Y
+          startAngle = Math.PI / 2
+        }
+      } else {
+        // Branch from session node — place near parent seed
+        const parentSeed = newSeedNodes.find(n => n.id === s.parent_node_id)
+        startX = parentSeed ? parentSeed.x + 40 + i * 20 : width / 2
+        startY = SEED_Y
+        startAngle = Math.PI / 2 + 0.3
+        isBranch = false
+      }
+
+      // For move-branched sessions, don't add a seed node at ground level
+      // The branch just grows from the move point
+      if (!s.parent_move_id) {
+        newSeedNodes.push({
+          kind: 'seed',
+          id: s.id,
+          x: startX,
+          y: startY,
+          session: s,
+          radius: 20,
+        })
+      }
+
+      const sessionMoves = moves.filter(m => m.session_id === s.id)
+      const { points, movePositions, moveAngles } = computeRootPath(
+        startX, startY, startAngle, sessionMoves, i + rootSessions.length, isBranch
+      )
+
+      newRootPaths.push({
+        sessionId: s.id,
+        points,
+        moves: sessionMoves,
+        startX,
+        startY,
+        isBranch,
+        branchFromMoveId: s.parent_move_id,
+      })
+
+      sessionMoves.forEach((mv, j) => {
+        if (movePositions[j]) {
+          newMoveNodes.push({
+            kind: 'move',
+            id: mv.id,
+            x: movePositions[j].x,
+            y: movePositions[j].y,
+            move: mv,
+            sessionId: s.id,
+            radius: 7,
+            angle: moveAngles[j],
+          })
+          movePositionMap.set(mv.id, {
+            x: movePositions[j].x,
+            y: movePositions[j].y,
+            angle: moveAngles[j],
+          })
+        }
+      })
+    })
+
+    return { seedNodes: newSeedNodes, moveNodes: newMoveNodes, rootPaths: newRootPaths }
   }, [computeRootPath])
 
   useEffect(() => {
-    const { seedNodes: sn, moveNodes: mn, rootPaths: rp, links: l } = computeLayout(sessions, allMoves, dimensions.width, dimensions.height)
+    const { seedNodes: sn, moveNodes: mn, rootPaths: rp } = computeLayout(sessions, allMoves, dimensions.width, dimensions.height)
     setSeedNodes(sn)
     setMoveNodes(mn)
     setRootPaths(rp)
-    setLinks(l)
     seedNodesRef.current = sn
     moveNodesRef.current = mn
   }, [sessions, allMoves, dimensions, computeLayout])
@@ -186,12 +310,6 @@ export default function Home() {
     seedNodesRef.current = seedNodes
     moveNodesRef.current = moveNodes
   }, [seedNodes, moveNodes])
-
-  const MOVE_COLORS: Record<string, string> = {
-    extend: '#6e9e8a',
-    challenge: '#9e6e6e',
-    pivot: '#7a6e9e',
-  }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -215,21 +333,7 @@ export default function Home() {
       ctx.stroke()
       ctx.setLineDash([])
 
-      // Parent-child links between seeds
-      links.forEach(link => {
-        ctx.beginPath()
-        const midY = link.source.y - 40
-        ctx.moveTo(link.source.x, link.source.y - link.source.radius)
-        ctx.quadraticCurveTo(
-          (link.source.x + link.target.x) / 2, midY,
-          link.target.x, link.target.y - link.target.radius
-        )
-        ctx.strokeStyle = 'rgba(138, 114, 72, 0.5)'
-        ctx.lineWidth = 1.5
-        ctx.stroke()
-      })
-
-      // Root paths
+      // Draw all root paths
       rootPaths.forEach(path => {
         if (path.points.length < 2) return
         const isSessionSelected = selected?.kind === 'seed' && selected.id === path.sessionId
@@ -237,14 +341,22 @@ export default function Home() {
         const isRelated = isSessionSelected || isMoveSelected
         const isDimmed = selected && !isRelated
 
-        ctx.globalAlpha = isDimmed ? 0.15 : 1
+        ctx.globalAlpha = isDimmed ? 0.12 : 1
+
+        // Draw junction marker for branches
+        if (path.isBranch) {
+          ctx.beginPath()
+          ctx.arc(path.startX, path.startY, 3, 0, Math.PI * 2)
+          ctx.fillStyle = isRelated ? 'var(--accent)' : 'rgba(138, 114, 72, 0.6)'
+          ctx.fill()
+        }
 
         for (let i = 0; i < path.points.length - 1; i++) {
           const from = path.points[i]
           const to = path.points[i + 1]
           const move = path.moves[i]
           const color = move ? MOVE_COLORS[move.move_type] || '#3a3a36' : '#2a2a26'
-          const width = Math.max(0.5, 3 - i * 0.3)
+          const width = Math.max(0.4, (path.isBranch ? 2 : 3) - i * 0.25)
 
           ctx.beginPath()
           ctx.moveTo(from.x, from.y)
@@ -256,7 +368,7 @@ export default function Home() {
             ctx.lineTo(to.x, to.y)
           }
 
-          ctx.strokeStyle = isRelated ? color : 'rgba(42, 42, 38, 0.8)'
+          ctx.strokeStyle = isRelated ? color : path.isBranch ? 'rgba(58, 58, 54, 0.6)' : 'rgba(42, 42, 38, 0.8)'
           ctx.lineWidth = width
           ctx.stroke()
 
@@ -264,11 +376,11 @@ export default function Home() {
           if (i === path.points.length - 2) {
             for (let h = 0; h < 3; h++) {
               const hairAngle = Math.atan2(to.y - from.y, to.x - from.x) + (h - 1) * 0.4
-              const hairLen = 8 + h * 4
+              const hairLen = 6 + h * 3
               ctx.beginPath()
               ctx.moveTo(to.x, to.y)
               ctx.lineTo(to.x + hairLen * Math.cos(hairAngle), to.y + hairLen * Math.sin(hairAngle))
-              ctx.strokeStyle = 'rgba(42, 42, 38, 0.4)'
+              ctx.strokeStyle = 'rgba(42, 42, 38, 0.35)'
               ctx.lineWidth = 0.5
               ctx.stroke()
             }
@@ -297,12 +409,11 @@ export default function Home() {
         ctx.lineWidth = isSelected ? 1.5 : 0.8
         ctx.stroke()
 
-        const symbols: Record<string, string> = { extend: '→', challenge: '↔', pivot: '↑' }
         ctx.fillStyle = parentSelected || isSelected ? color : '#3a3a36'
         ctx.font = '400 7px DM Mono, monospace'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        ctx.fillText(symbols[node.move.move_type] || '·', node.x, node.y)
+        ctx.fillText(MOVE_SYMBOLS[node.move.move_type] || '·', node.x, node.y)
 
         ctx.globalAlpha = 1
       })
@@ -357,7 +468,7 @@ export default function Home() {
 
     animRef.current = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(animRef.current)
-  }, [seedNodes, moveNodes, rootPaths, links, selected, dimensions, zoom, pan])
+  }, [seedNodes, moveNodes, rootPaths, selected, dimensions, zoom, pan])
 
   const toWorld = (x: number, y: number) => ({ x: (x - pan.x) / zoom, y: (y - pan.y) / zoom })
 
@@ -413,24 +524,19 @@ export default function Home() {
     ? allMoves.filter(m => m.session_id === selected.id)
     : selected?.kind === 'move' ? [selected.move] : []
 
-  const MOVE_SYMBOLS: Record<string, string> = { extend: '→', challenge: '↔', pivot: '↑' }
-
   return (
     <div style={{ width: '100vw', height: '100vh', background: 'var(--bg)', overflow: 'hidden', position: 'relative' }}>
 
-      {/* Header */}
       <div style={{ position: 'absolute', top: '1.5rem', left: '50%', transform: 'translateX(-50%)', zIndex: 10, textAlign: 'center', pointerEvents: 'none' }}>
         <div style={{ fontSize: '1.4rem', fontWeight: 300, letterSpacing: '0.3em', color: 'var(--text-primary)' }}>ARBOR</div>
         <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.8rem', letterSpacing: '0.05em', marginTop: '0.2rem' }}>Where thinking blossoms into being.</div>
       </div>
 
-      {/* Stats */}
       <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', zIndex: 10, fontFamily: 'DM Mono, monospace', fontSize: '0.62rem', color: 'var(--text-muted)', letterSpacing: '0.08em', textAlign: 'right' }}>
         <div>{sessions.length} SESSION{sessions.length !== 1 ? 'S' : ''}</div>
         <div style={{ marginTop: '0.25rem', fontSize: '0.58rem' }}>LIVE</div>
       </div>
 
-      {/* Legend */}
       <div style={{ position: 'absolute', top: '1.5rem', left: '1.5rem', zIndex: 10, fontFamily: 'DM Mono, monospace', fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.08em', lineHeight: '2' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><span style={{ color: '#6e9e8a' }}>→</span> EXTEND</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><span style={{ color: '#9e6e6e' }}>↔</span> CHALLENGE</div>
@@ -452,7 +558,6 @@ export default function Home() {
         style={{ cursor: 'pointer', display: 'block' }}
       />
 
-      {/* Empty state */}
       {sessions.length === 0 && (
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none' }}>
           <div style={{ color: 'var(--text-muted)', fontSize: '1rem', marginBottom: '0.5rem' }}>The tree is empty.</div>
@@ -460,7 +565,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* Selected panel */}
       {selected && (
         <div style={{ position: 'absolute', top: '5rem', right: '1.5rem', width: '280px', maxHeight: 'calc(100vh - 8rem)', overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '4px', padding: '1.25rem', zIndex: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
@@ -494,7 +598,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Move flow for seed */}
           {selected.kind === 'seed' && selectedMoves.length > 0 && (
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
               <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.58rem', color: 'var(--text-muted)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
@@ -515,14 +618,13 @@ export default function Home() {
             </div>
           )}
 
-          {/* Branch from move — the fractal moment */}
           {selected.kind === 'move' && (
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
               <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.58rem', color: 'var(--text-muted)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
                 THIS MOVE CAN BECOME A SEED
               </div>
               <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.78rem', lineHeight: '1.5', marginBottom: '0.75rem' }}>
-                Plant a new inquiry branching from this thought.
+                A new root will divert from this point.
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 {(['extend', 'challenge', 'pivot'] as const).map(type => {
@@ -556,7 +658,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* Seed button */}
       <div style={{ position: 'absolute', bottom: '1.5rem', left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
         <a href="/seed"
           style={{ display: 'block', padding: '0.6rem 2rem', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent-dim)', borderRadius: '3px', fontFamily: 'DM Mono, monospace', fontSize: '0.7rem', letterSpacing: '0.15em', textDecoration: 'none', textAlign: 'center' }}>
