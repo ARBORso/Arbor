@@ -4,10 +4,25 @@ import { supabase } from '@/lib/supabase'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+async function withRetry<T>(fn: () => Promise<T>, retries = 4, delay = 3000): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn()
+    } catch (e: any) {
+      if ((e?.status === 529 || e?.status === 500) && i < retries - 1) {
+        await new Promise(res => setTimeout(res, delay))
+        continue
+      }
+      throw e
+    }
+  }
+  throw new Error('Max retries exceeded')
+}
+
 export async function POST(req: NextRequest) {
   const { seed_problem, parent_node_id } = await req.json()
 
-  const reframingResponse = await anthropic.messages.create({
+  const reframingResponse = await withRetry(() => anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1000,
     system: `You are a participant in Arbor — a game of collaborative thought. 
@@ -16,7 +31,7 @@ NOT to answer it. NOT to solve it.
 Offer a completely different frame that opens new territory.
 Be concise — one or two sentences. Make it surprising but true.`,
     messages: [{ role: 'user', content: seed_problem }]
-  })
+  }))
 
   const seed_reframing = reframingResponse.content[0].type === 'text'
     ? reframingResponse.content[0].text
