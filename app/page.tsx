@@ -221,6 +221,7 @@ export default function Home() {
     // Process branched sessions iteratively
     let remaining = [...branchedSessions]
     let maxIterations = 10
+    console.log('Iteration', 10 - maxIterations, 'remaining:', remaining.length, 'map size:', movePositionMap.size)
 
     while (remaining.length > 0 && maxIterations > 0) {
   maxIterations--
