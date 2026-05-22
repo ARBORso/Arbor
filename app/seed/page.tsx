@@ -34,25 +34,19 @@ export default function SeedPage() {
   }
 
   const handleStart = async () => {
-  if (!seed.trim()) return
-  setLoading(true)
-  try {
-    const res = await fetch('/api/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        seed_problem: seed.trim(),
-        parent_node_id: parentId || null,
-        parent_move_id: parentMoveId || null,
-        branch_type: branchType || null,
+    if (!seed.trim()) return
+    setLoading(true)
+    try {
+      const res = await fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seed_problem: seed.trim(),
+          parent_node_id: parentId || null,
+          parent_move_id: parentMoveId || null,
+          branch_type: branchType || null,
+        })
       })
-    })
-    const session = await res.json()
-    window.location.href = `/session/${session.id}`
-  } catch (e) {
-    setLoading(false)
-  }
-}
       const session = await res.json()
       window.location.href = `/session/${session.id}`
     } catch (e) {
@@ -66,7 +60,7 @@ export default function SeedPage() {
         <a href="/" style={{ color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', fontSize: '0.65rem', letterSpacing: '0.1em', textDecoration: 'none' }}>← ARBOR</a>
 
         {isMoveBranch && context && branchType && (
-          <div style={{ marginTop: '1.5rem', padding: '1rem 1.25rem', background: 'var(--bg-card)', border: `1px solid ${MOVE_COLORS[branchType] || 'var(--border)'}44`, borderRadius: '4px', textAlign: 'left' }}>
+          <div style={{ marginTop: '1.5rem', padding: '1rem 1.25rem', background: 'var(--bg-card)', border: `1px solid ${(MOVE_COLORS[branchType] || '#3a3a36')}44`, borderRadius: '4px', textAlign: 'left' }}>
             <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.58rem', color: MOVE_COLORS[branchType] || 'var(--text-muted)', letterSpacing: '0.1em', marginBottom: '0.5rem' }}>
               {MOVE_SYMBOLS[branchType]} BRANCHING FROM MOVE · {branchType.toUpperCase()}
             </div>
@@ -82,7 +76,8 @@ export default function SeedPage() {
         <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.95rem', marginTop: '0.5rem' }}>
           {isMoveBranch
             ? 'What new inquiry does this thought open?'
-            : parentId ? 'Continue the thinking from a new angle.'
+            : parentId
+            ? 'Continue the thinking from a new angle.'
             : 'State your problem in one sentence.'}
         </p>
       </div>
@@ -94,17 +89,59 @@ export default function SeedPage() {
           placeholder="State your seed problem in one sentence..."
           rows={3}
           autoFocus
-          style={{ width: '100%', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '4px', padding: '1.25rem 1.5rem', color: 'var(--text-primary)', fontFamily: 'Cormorant Garamond, Georgia, serif', fontSize: '1.1rem', lineHeight: '1.6', resize: 'none', outline: 'none' }}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleStart() } }}
+          style={{
+            width: '100%',
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
+            borderRadius: '4px',
+            padding: '1.25rem 1.5rem',
+            color: 'var(--text-primary)',
+            fontFamily: 'Cormorant Garamond, Georgia, serif',
+            fontSize: '1.1rem',
+            lineHeight: '1.6',
+            resize: 'none',
+            outline: 'none',
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              handleStart()
+            }
+          }}
         />
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
           <button
             onClick={handleStart}
             disabled={!seed.trim() || loading}
-            style={{ background: seed.trim() && !loading ? 'var(--accent)' : 'var(--bg-card)', color: seed.trim() && !loading ? 'var(--bg)' : 'var(--text-muted)', border: '1px solid ' + (seed.trim() && !loading ? 'var(--accent)' : 'var(--border)'), borderRadius: '3px', padding: '0.6rem 1.5rem', fontFamily: 'DM Mono, monospace', fontSize: '0.7rem', letterSpacing: '0.12em', cursor: 'pointer' }}>
+            style={{
+              background: seed.trim() && !loading ? 'var(--accent)' : 'var(--bg-card)',
+              color: seed.trim() && !loading ? 'var(--bg)' : 'var(--text-muted)',
+              border: '1px solid ' + (seed.trim() && !loading ? 'var(--accent)' : 'var(--border)'),
+              borderRadius: '3px',
+              padding: '0.6rem 1.5rem',
+              fontFamily: 'DM Mono, monospace',
+              fontSize: '0.7rem',
+              letterSpacing: '0.12em',
+              cursor: seed.trim() && !loading ? 'pointer' : 'default',
+            }}
+          >
             {loading ? 'SEEDING...' : 'BEGIN SESSION'}
           </button>
         </div>
+      </div>
+
+      <div style={{ width: '100%', maxWidth: '600px', marginTop: '4rem', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.5rem' }}>
+        {[
+          { phase: '01', label: 'Seed', desc: 'You state a problem. Arbor reframes it.' },
+          { phase: '02', label: 'Exchange', desc: 'Extend, Challenge, or Pivot — no limit.' },
+          { phase: '03', label: 'Crystallize', desc: 'When ready, Arbor distils the Node.' },
+        ].map(item => (
+          <div key={item.phase} style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+            <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>{item.phase}</div>
+            <div style={{ color: 'var(--accent)', fontSize: '0.95rem', marginBottom: '0.4rem' }}>{item.label}</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: '1.5' }}>{item.desc}</div>
+          </div>
+        ))}
       </div>
     </main>
   )
