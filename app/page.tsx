@@ -101,6 +101,14 @@ export default function Home() {
     let currentY = startY
     const segmentLength = isBranch ? 38 : 45
 
+    // If no moves yet, still add a stub point so the branch is visible
+    if (moves.length === 0) {
+      const stubX = currentX + segmentLength * Math.cos(currentAngle)
+      const stubY = currentY + segmentLength * Math.sin(currentAngle)
+      points.push({ x: stubX, y: stubY })
+      return { points, movePositions, moveAngles }
+    }
+
     moves.forEach((mv, i) => {
       if (mv.move_type === 'extend') {
         currentAngle += isBranch ? 0.05 : -0.05
@@ -144,8 +152,6 @@ export default function Home() {
     const newSeedNodes: SeedNode[] = []
     const newMoveNodes: MoveNode[] = []
     const newRootPaths: RootPath[] = []
-
-    // Build move position map from ALL moves first
     const movePositionMap = new Map<string, { x: number; y: number; angle: number }>()
 
     const rootSessions = sessions.filter(s => !s.parent_move_id && !s.parent_node_id)
@@ -204,12 +210,11 @@ export default function Home() {
             y: movePositions[j].y,
             angle: moveAngles[j],
           })
-          console.log('Added to map:', mv.id)
         }
       })
     }
 
-    // Process ALL root sessions first — fully populate movePositionMap
+    // Process ALL root sessions first
     rootSessions.forEach((s, i) => {
       const sx = rootSessions.length === 1
         ? width / 2
@@ -221,15 +226,12 @@ export default function Home() {
       processSession(s, i, false, false, sx, sy, startAngle)
     })
 
-    console.log('After root sessions, map size:', movePositionMap.size)
-
-    // Now process branched sessions — map is fully populated
+    // Process branched sessions iteratively
     let remaining = [...branchedSessions]
     let maxIterations = 10
 
     while (remaining.length > 0 && maxIterations > 0) {
       maxIterations--
-      console.log('Iteration', 10 - maxIterations, 'remaining:', remaining.length, 'map size:', movePositionMap.size)
       const nextRemaining: Session[] = []
 
       remaining.forEach((s, i) => {
@@ -237,8 +239,6 @@ export default function Home() {
           const trimmedId = s.parent_move_id.trim()
           const parentPos = Array.from(movePositionMap.entries())
             .find(([k]) => k.trim() === trimmedId)?.[1]
-
-          console.log('Looking for:', trimmedId, '→ found:', !!parentPos)
 
           if (!parentPos) {
             if (maxIterations <= 1) {
@@ -251,7 +251,6 @@ export default function Home() {
           }
           const divertDir = i % 2 === 0 ? 1 : -1
           const startAngle = parentPos.angle + divertDir * (Math.PI / 3.5)
-          console.log('Branching from position:', parentPos.x, parentPos.y, 'angle:', startAngle)
           processSession(s, i, true, true, parentPos.x, parentPos.y, startAngle)
         } else if (s.parent_node_id) {
           const parentSeed = newSeedNodes.find(n => n.id === s.parent_node_id)
@@ -321,10 +320,11 @@ export default function Home() {
 
         ctx.globalAlpha = isDimmed ? 0.12 : 1
 
+        // Junction marker for move branches
         if (path.isMoveBranch) {
           ctx.beginPath()
-          ctx.arc(path.startX, path.startY, 3.5, 0, Math.PI * 2)
-          ctx.fillStyle = isRelated ? '#c8a96e' : 'rgba(138, 114, 72, 0.7)'
+          ctx.arc(path.startX, path.startY, 4, 0, Math.PI * 2)
+          ctx.fillStyle = isRelated ? '#c8a96e' : 'rgba(200, 169, 110, 0.6)'
           ctx.fill()
         }
 
@@ -332,8 +332,8 @@ export default function Home() {
           const from = path.points[i]
           const to = path.points[i + 1]
           const move = path.moves[i]
-          const color = move ? MOVE_COLORS[move.move_type] || '#3a3a36' : '#2a2a26'
-          const width = Math.max(0.4, (path.isMoveBranch ? 2 : 3) - i * 0.25)
+          const color = move ? MOVE_COLORS[move.move_type] || '#3a3a36' : '#8a7248'
+          const width = Math.max(0.5, (path.isMoveBranch ? 2 : 3) - i * 0.25)
 
           ctx.beginPath()
           ctx.moveTo(from.x, from.y)
@@ -345,10 +345,16 @@ export default function Home() {
             ctx.lineTo(to.x, to.y)
           }
 
-          ctx.strokeStyle = isRelated ? color : path.isMoveBranch ? 'rgba(58, 58, 54, 0.7)' : 'rgba(42, 42, 38, 0.8)'
+          // Branches are more visible — golden color with opacity
+          ctx.strokeStyle = isRelated
+            ? color
+            : path.isMoveBranch
+              ? 'rgba(138, 114, 72, 0.8)'
+              : 'rgba(42, 42, 38, 0.8)'
           ctx.lineWidth = width
           ctx.stroke()
 
+          // Root hairs at tip
           if (i === path.points.length - 2) {
             for (let h = 0; h < 3; h++) {
               const hairAngle = Math.atan2(to.y - from.y, to.x - from.x) + (h - 1) * 0.4
