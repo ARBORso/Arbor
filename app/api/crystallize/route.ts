@@ -5,7 +5,7 @@ import { supabase, Move } from '@/lib/supabase'
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 export async function POST(req: NextRequest) {
-  const { session_id, node_statement } = await req.json()
+  const { session_id } = await req.json()
 
   const { data: session } = await supabase
     .from('sessions')
@@ -23,46 +23,36 @@ export async function POST(req: NextRequest) {
     `[${m.role.toUpperCase()} - ${m.move_type.toUpperCase()}] ${m.content}`
   ).join('\n\n')
 
-  const questionResponse = await anthropic.messages.create({
+  const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1000,
     system: `You are completing a session of Arbor — a game of collaborative thought.
+Your task: read the full exchange and crystallise it into two things.
 
-The human has distilled the session into a Node statement. 
-Your task: add the ONE question this Node leaves open.
+1. NODE STATEMENT — one sentence that captures where the thinking arrived. Not a summary. The distilled insight.
+2. OPEN QUESTION — one question this Node leaves open. The most important output. It must open new territory, be specific, and feel like an invitation for the next session.
 
-This question is the most important output of the session.
-It must:
-- Emerge genuinely from the conversation — not be generic
-- Open territory the conversation didn't enter
-- Be specific enough to be a real seed for the next session
-- Feel like an invitation, not an interrogation
+Respond in this exact JSON format:
+{"node_statement": "...", "open_question": "..."}
 
-Return only the question. No preamble.`,
+No preamble. No explanation. Only the JSON.`,
     messages: [{
       role: 'user',
       content: `Seed problem: "${session?.seed_problem}"
+Reframing: "${session?.seed_reframing}"
 
 Full exchange:
-${movesSummary}
-
-Human's Node statement: "${node_statement}"
-
-What is the one question this Node leaves open?`
+${movesSummary}`
     }]
   })
 
-  const open_question = questionResponse.content[0].type === 'text'
-    ? questionResponse.content[0].text
-    : ''
+  const text = response.content[0].type === 'text' ? response.content[0].text : '{}'
+  const clean = text.replace(/```json|```/g, '').trim()
+  const { node_statement, open_question } = JSON.parse(clean)
 
   const { data, error } = await supabase
     .from('sessions')
-    .update({
-      node_statement,
-      open_question,
-      status: 'complete'
-    })
+    .update({ node_statement, open_question, status: 'complete' })
     .eq('id', session_id)
     .select()
     .single()
