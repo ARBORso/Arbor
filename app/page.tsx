@@ -67,20 +67,17 @@ export default function Home() {
     setAllMoves(m || [])
   }
 
-  // Compute root path for a session's moves
-  // Each move type bends the root differently
-  const computeRootPath = (
+  const computeRootPath = useCallback((
     startX: number,
     startY: number,
     moves: Move[],
     sessionIndex: number,
     totalSessions: number
-  ): { points: { x: number; y: number }[]; movePositions: { x: number; y: number }[] } => {
+  ) => {
     const points: { x: number; y: number }[] = [{ x: startX, y: startY }]
     const movePositions: { x: number; y: number }[] = []
 
-    // Base direction — roots grow downward, spread based on session position
-    const baseAngle = Math.PI / 2 // straight down
+    const baseAngle = Math.PI / 2
     const spreadAngle = ((sessionIndex / Math.max(totalSessions - 1, 1)) - 0.5) * (Math.PI * 0.6)
     let currentAngle = baseAngle + spreadAngle
     let currentX = startX
@@ -88,26 +85,20 @@ export default function Home() {
     const segmentLength = 45
 
     moves.forEach((mv, i) => {
-      // Each move type bends the angle differently
       if (mv.move_type === 'extend') {
-        // Extend: continues forward with slight drift toward center
         const drift = -spreadAngle * 0.15
         currentAngle += drift
       } else if (mv.move_type === 'challenge') {
-        // Challenge: sharp bend, hits resistance
         const bendDir = (sessionIndex % 2 === 0 ? 1 : -1) * (i % 2 === 0 ? 1 : -1)
         currentAngle += bendDir * (Math.PI / 5)
       } else if (mv.move_type === 'pivot') {
-        // Pivot: sudden direction change at golden angle
         const goldenAngle = 2.399
         currentAngle += (i % 2 === 0 ? 1 : -1) * goldenAngle * 0.4
       }
 
-      // Add some organic wobble
       const wobble = Math.sin(i * 1.7 + sessionIndex) * 0.08
       currentAngle += wobble
 
-      // Keep roots growing mostly downward
       const maxDeviation = Math.PI / 2.5
       const downAngle = Math.PI / 2
       if (Math.abs(currentAngle - downAngle) > maxDeviation) {
@@ -122,10 +113,9 @@ export default function Home() {
     })
 
     return { points, movePositions }
-  }
+  }, [])
 
   const computeLayout = useCallback((sessions: Session[], moves: Move[], width: number, height: number) => {
-    // Seeds sit at the top, spread horizontally
     const SEED_Y = 100
     const PADDING = 80
     const availableWidth = width - PADDING * 2
@@ -152,14 +142,9 @@ export default function Home() {
       newSeedNodes.push(seedNode)
 
       const sessionMoves = moves.filter(m => m.session_id === s.id)
-
       const { points, movePositions } = computeRootPath(sx, sy, sessionMoves, i, sessions.length)
 
-      newRootPaths.push({
-        sessionId: s.id,
-        points,
-        moves: sessionMoves,
-      })
+      newRootPaths.push({ sessionId: s.id, points, moves: sessionMoves })
 
       sessionMoves.forEach((mv, j) => {
         if (movePositions[j]) {
@@ -176,7 +161,6 @@ export default function Home() {
       })
     })
 
-    // Links between parent-child sessions at seed level
     sessions.forEach(s => {
       if (s.parent_node_id) {
         const source = newSeedNodes.find(n => n.id === s.parent_node_id)
@@ -221,7 +205,7 @@ export default function Home() {
       ctx.translate(pan.x, pan.y)
       ctx.scale(zoom, zoom)
 
-      // Ground line — where seeds sit
+      // Ground line
       ctx.beginPath()
       ctx.moveTo(-2000, 108)
       ctx.lineTo(2000, 108)
@@ -231,7 +215,7 @@ export default function Home() {
       ctx.stroke()
       ctx.setLineDash([])
 
-      // Draw parent-child links between seeds (above ground)
+      // Parent-child links between seeds
       links.forEach(link => {
         ctx.beginPath()
         const midY = link.source.y - 40
@@ -245,7 +229,7 @@ export default function Home() {
         ctx.stroke()
       })
 
-      // Draw root paths
+      // Root paths
       rootPaths.forEach(path => {
         if (path.points.length < 2) return
         const isSessionSelected = selected?.kind === 'seed' && selected.id === path.sessionId
@@ -255,44 +239,36 @@ export default function Home() {
 
         ctx.globalAlpha = isDimmed ? 0.15 : 1
 
-        // Draw the root as a tapering line with move colors
         for (let i = 0; i < path.points.length - 1; i++) {
           const from = path.points[i]
           const to = path.points[i + 1]
           const move = path.moves[i]
           const color = move ? MOVE_COLORS[move.move_type] || '#3a3a36' : '#2a2a26'
-          const alpha = isRelated ? 0.9 : 0.5
           const width = Math.max(0.5, 3 - i * 0.3)
 
           ctx.beginPath()
           ctx.moveTo(from.x, from.y)
 
-          // Smooth curve to next point
           if (i < path.points.length - 2) {
             const next = path.points[i + 2]
-            const cpx = to.x
-            const cpy = to.y
-            ctx.quadraticCurveTo(cpx, cpy, (to.x + next.x) / 2, (to.y + next.y) / 2)
+            ctx.quadraticCurveTo(to.x, to.y, (to.x + next.x) / 2, (to.y + next.y) / 2)
           } else {
             ctx.lineTo(to.x, to.y)
           }
 
-          ctx.strokeStyle = isRelated ? color : `rgba(42, 42, 38, 0.8)`
+          ctx.strokeStyle = isRelated ? color : 'rgba(42, 42, 38, 0.8)'
           ctx.lineWidth = width
           ctx.stroke()
 
-          // Fine root hairs at the end of each segment
+          // Root hairs at tip
           if (i === path.points.length - 2) {
             for (let h = 0; h < 3; h++) {
               const hairAngle = Math.atan2(to.y - from.y, to.x - from.x) + (h - 1) * 0.4
               const hairLen = 8 + h * 4
               ctx.beginPath()
               ctx.moveTo(to.x, to.y)
-              ctx.lineTo(
-                to.x + hairLen * Math.cos(hairAngle),
-                to.y + hairLen * Math.sin(hairAngle)
-              )
-              ctx.strokeStyle = `rgba(42, 42, 38, 0.4)`
+              ctx.lineTo(to.x + hairLen * Math.cos(hairAngle), to.y + hairLen * Math.sin(hairAngle))
+              ctx.strokeStyle = 'rgba(42, 42, 38, 0.4)'
               ctx.lineWidth = 0.5
               ctx.stroke()
             }
@@ -302,7 +278,7 @@ export default function Home() {
         ctx.globalAlpha = 1
       })
 
-      // Draw move nodes along the roots
+      // Move nodes
       moveNodes.forEach(node => {
         const isSelected = selected?.id === node.id
         const parentSelected = (selected?.kind === 'seed' && selected.id === node.sessionId) ||
@@ -313,7 +289,6 @@ export default function Home() {
 
         const color = MOVE_COLORS[node.move.move_type] || '#4a4a44'
 
-        // Small organic node
         ctx.beginPath()
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
         ctx.fillStyle = isSelected ? color + '33' : '#0f0f0d'
@@ -332,14 +307,13 @@ export default function Home() {
         ctx.globalAlpha = 1
       })
 
-      // Draw seed nodes at ground level
+      // Seed nodes
       seedNodes.forEach(node => {
         const isSelected = selected?.kind === 'seed' && selected.id === node.id
         const isDimmed = selected && selected.kind === 'seed' && selected.id !== node.id
 
         ctx.globalAlpha = isDimmed ? 0.3 : 1
 
-        // Glow for complete
         if (node.session.status === 'complete') {
           const glow = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, node.radius * 2.5)
           glow.addColorStop(0, 'rgba(200, 169, 110, 0.25)')
@@ -350,7 +324,6 @@ export default function Home() {
           ctx.fill()
         }
 
-        // Seed shape — small oval sitting on the ground line
         ctx.beginPath()
         ctx.ellipse(node.x, node.y, node.radius * 0.7, node.radius, 0, 0, Math.PI * 2)
         ctx.fillStyle = node.session.status === 'complete' ? '#1a1a14' : '#111110'
@@ -360,14 +333,12 @@ export default function Home() {
         ctx.lineWidth = isSelected ? 2 : 1.5
         ctx.stroke()
 
-        // Mark
         ctx.fillStyle = node.session.status === 'complete' ? '#c8a96e' : '#4a4a44'
         ctx.font = node.session.status === 'complete' ? '500 10px DM Mono, monospace' : '400 8px DM Mono, monospace'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(node.session.status === 'complete' ? '◆' : '·', node.x, node.y)
 
-        // Label above seed
         const label = node.session.seed_problem.length > 20
           ? node.session.seed_problem.slice(0, 20) + '...'
           : node.session.seed_problem
@@ -402,20 +373,20 @@ export default function Home() {
   }
 
   const handleWheel = (e: React.WheelEvent) => {
-  e.preventDefault()
-  const rect = canvasRef.current!.getBoundingClientRect()
-  const mouseX = e.clientX - rect.left
-  const mouseY = e.clientY - rect.top
-  const delta = e.deltaY > 0 ? 0.9 : 1.1
-  setZoom(z => {
-    const newZoom = Math.max(0.2, Math.min(5, z * delta))
-    setPan(p => ({
-      x: mouseX - (mouseX - p.x) * (newZoom / z),
-      y: mouseY - (mouseY - p.y) * (newZoom / z),
-    }))
-    return newZoom
-  })
-}
+    e.preventDefault()
+    const rect = canvasRef.current!.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
+    const delta = e.deltaY > 0 ? 0.9 : 1.1
+    setZoom(z => {
+      const newZoom = Math.max(0.2, Math.min(5, z * delta))
+      setPan(p => ({
+        x: mouseX - (mouseX - p.x) * (newZoom / z),
+        y: mouseY - (mouseY - p.y) * (newZoom / z),
+      }))
+      return newZoom
+    })
+  }
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect()
@@ -441,6 +412,8 @@ export default function Home() {
   const selectedMoves = selected?.kind === 'seed'
     ? allMoves.filter(m => m.session_id === selected.id)
     : selected?.kind === 'move' ? [selected.move] : []
+
+  const MOVE_SYMBOLS: Record<string, string> = { extend: '→', challenge: '↔', pivot: '↑' }
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: 'var(--bg)', overflow: 'hidden', position: 'relative' }}>
@@ -521,21 +494,20 @@ export default function Home() {
             </div>
           )}
 
-          {/* Move flow */}
-          {selectedMoves.length > 0 && (
+          {/* Move flow for seed */}
+          {selected.kind === 'seed' && selectedMoves.length > 0 && (
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
               <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.58rem', color: 'var(--text-muted)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
                 ROOT FLOW — {selectedMoves.length} MOVES
               </div>
-              {selectedMoves.map((mv, i) => {
+              {selectedMoves.map((mv) => {
                 const color = MOVE_COLORS[mv.move_type] || '#4a4a44'
-                const symbol = { extend: '→', challenge: '↔', pivot: '↑' }[mv.move_type] || '·'
-                const isThisMove = selected.kind === 'move' && selected.id === mv.id
+                const symbol = MOVE_SYMBOLS[mv.move_type] || '·'
                 return (
-                  <div key={mv.id} style={{ marginBottom: '0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-start', opacity: isThisMove ? 1 : 0.7 }}>
+                  <div key={mv.id} style={{ marginBottom: '0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
                     <span style={{ color, fontFamily: 'DM Mono, monospace', fontSize: '0.7rem', flexShrink: 0, marginTop: '0.1rem' }}>{symbol}</span>
                     <div style={{ color: mv.role === 'human' ? 'var(--text-secondary)' : 'var(--text-muted)', fontSize: '0.78rem', lineHeight: '1.4', fontStyle: mv.role === 'ai' ? 'italic' : 'normal' }}>
-                      {mv.content.length > 70 ? mv.content.slice(0, 70) + '...' : mv.content}
+                      {mv.content.length > 60 ? mv.content.slice(0, 60) + '...' : mv.content}
                     </div>
                   </div>
                 )
@@ -543,7 +515,33 @@ export default function Home() {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {/* Branch from move — the fractal moment */}
+          {selected.kind === 'move' && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
+              <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '0.58rem', color: 'var(--text-muted)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
+                THIS MOVE CAN BECOME A SEED
+              </div>
+              <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.78rem', lineHeight: '1.5', marginBottom: '0.75rem' }}>
+                Plant a new inquiry branching from this thought.
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {(['extend', 'challenge', 'pivot'] as const).map(type => {
+                  const color = MOVE_COLORS[type]
+                  const symbol = MOVE_SYMBOLS[type]
+                  return (
+                    <a key={type}
+                      href={`/seed?parent_move=${selected.id}&parent_session=${selected.sessionId}&branch_type=${type}&context=${encodeURIComponent(selected.move.content.slice(0, 100))}`}
+                      style={{ flex: 1, display: 'block', textAlign: 'center', padding: '0.5rem 0.25rem', background: 'transparent', color, border: `1px solid ${color}44`, borderRadius: '3px', fontFamily: 'DM Mono, monospace', fontSize: '0.58rem', letterSpacing: '0.06em', textDecoration: 'none' }}>
+                      <div style={{ marginBottom: '0.15rem' }}>{symbol}</div>
+                      <div>{type.toUpperCase()}</div>
+                    </a>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
             <a href={`/session/${selected.kind === 'seed' ? selected.id : selected.sessionId}`}
               style={{ flex: 1, display: 'block', textAlign: 'center', padding: '0.5rem', background: 'var(--accent)', color: 'var(--bg)', borderRadius: '3px', fontFamily: 'DM Mono, monospace', fontSize: '0.6rem', letterSpacing: '0.08em', textDecoration: 'none' }}>
               OPEN
