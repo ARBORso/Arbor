@@ -223,12 +223,13 @@ export default function Home() {
     let maxIterations = 10
 
     while (remaining.length > 0 && maxIterations > 0) {
-      maxIterations--
-      const nextRemaining: Session[] = []
+  maxIterations--
+  const nextRemaining: Session[] = []
 
-      remaining.forEach((s, i) => {
-        if (s.parent_move_id) {
-          const parentPos = movePositionMap.get(s.parent_move_id)
+  remaining.forEach((s, i) => {
+    if (s.parent_move_id) {
+      console.log('Looking for move:', s.parent_move_id, 'Map has:', Array.from(movePositionMap.keys()))
+      const parentPos = movePositionMap.get(s.parent_move_id)
           if (!parentPos) {
             if (maxIterations <= 1) {
               // Parent move not found — fall back to regular seed
