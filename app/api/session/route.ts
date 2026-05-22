@@ -20,7 +20,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 4, delay = 3000): Pr
 }
 
 export async function POST(req: NextRequest) {
-  const { seed_problem, parent_node_id } = await req.json()
+  const { seed_problem, parent_node_id, parent_move_id } = await req.json()
 
   const reframingResponse = await withRetry(() => anthropic.messages.create({
     model: 'claude-sonnet-4-5',
@@ -40,11 +40,12 @@ Be concise — one or two sentences. Make it surprising but true.`,
   const { data, error } = await supabase
     .from('sessions')
     .insert({
-      seed_problem,
-      seed_reframing,
-      parent_node_id: parent_node_id || null,
-      status: 'exchange'
-    })
+  seed_problem,
+  seed_reframing,
+  parent_node_id: parent_node_id || null,
+  parent_move_id: parent_move_id || null,
+  status: 'exchange'
+})
     .select()
     .single()
 
