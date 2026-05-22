@@ -10,28 +10,33 @@ const MOVE_DESCRIPTIONS = {
   pivot: '↑ Pivot: make an unexpected but genuinely connected leap'
 }
 
+async function withRetry<T>(fn: () => Promise<T>, retries = 4, delay = 3000): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn()
+    } catch (e: any) {
+      if ((e?.status === 529 || e?.status === 500) && i < retries - 1) {
+        await new Promise(res => setTimeout(res, delay))
+        continue
+      }
+      throw e
+    }
+  }
+  throw new Error('Max retries exceeded')
+}
+
 export async function POST(req: NextRequest) {
   const { session_id, content, move_type, turn } = await req.json()
 
   await supabase.from('moves').insert({
-    session_id,
-    turn,
-    role: 'human',
-    move_type,
-    content
+    session_id, turn, role: 'human', move_type, content
   })
 
   const { data: session } = await supabase
-    .from('sessions')
-    .select('*')
-    .eq('id', session_id)
-    .single()
+    .from('sessions').select('*').eq('id', session_id).single()
 
   const { data: moves } = await supabase
-    .from('moves')
-    .select('*')
-    .eq('session_id', session_id)
-    .order('turn', { ascending: true })
+    .from('moves').select('*').eq('session_id', session_id).order('turn', { ascending: true })
 
   const moveTypes: MoveType[] = ['extend', 'challenge', 'pivot']
   const availableMoves = moveTypes.filter(m => m !== move_type)
@@ -42,7 +47,7 @@ export async function POST(req: NextRequest) {
     content: `[${m.move_type.toUpperCase()}] ${m.content}`
   }))
 
-  const aiResponse = await anthropic.messages.create({
+  const aiResponse = await withRetry(() => anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1000,
     system: `You are a participant in Arbor — a game of collaborative thought.
@@ -50,7 +55,6 @@ export async function POST(req: NextRequest) {
 The seed problem: "${session?.seed_problem}"
 The reframing you offered: "${session?.seed_reframing}"
 
-You are making move ${turn + 1} of 10 (5 per participant).
 Your move type is: ${MOVE_DESCRIPTIONS[aiMoveType]}
 
 Rules:
@@ -61,24 +65,16 @@ Rules:
 - You are a genuine participant, not a helpful assistant`,
     messages: [
       ...conversationHistory,
-      {
-        role: 'user',
-        content: `[${move_type.toUpperCase()}] ${content}`
-      }
+      { role: 'user', content: `[${move_type.toUpperCase()}] ${content}` }
     ]
-  })
+  }))
 
   const aiContent = aiResponse.content[0].type === 'text'
-    ? aiResponse.content[0].text
-    : ''
+    ? aiResponse.content[0].text : ''
 
-  const { data: aiMove } = await supabase.from('moves').insert({
-    session_id,
-    turn: turn + 1,
-    role: 'ai',
-    move_type: aiMoveType,
-    content: aiContent
-  }).select().single()
+  await supabase.from('moves').insert({
+    session_id, turn: turn + 1, role: 'ai', move_type: aiMoveType, content: aiContent
+  })
 
-return NextResponse.json({ aiMove, isComplete: false })
+  return NextResponse.json({ isComplete: false })
 }
