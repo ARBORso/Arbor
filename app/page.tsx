@@ -242,6 +242,13 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Relatability link */}
+<div style={{ position: 'absolute', top: '6rem', left: '1.5rem', zIndex: 10 }}>
+  <a href="/relatability" style={{ color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', fontSize: '0.6rem', letterSpacing: '0.08em', textDecoration: 'none' }}>
+    RELATABILITY MAP →
+  </a>
+</div>
+      
       {/* Canvas */}
       <canvas
         ref={canvasRef}
