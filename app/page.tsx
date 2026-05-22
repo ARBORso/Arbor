@@ -178,6 +178,7 @@ export default function Home() {
       }
 
       const sessionMoves = moves.filter(m => m.session_id === s.id)
+      console.log('Session', s.id, 'found moves:', sessionMoves.length, 'total moves available:', moves.length)
       const { points, movePositions, moveAngles } = computeRootPath(
         startX, startY, startAngle, sessionMoves, i, isBranch
       )
