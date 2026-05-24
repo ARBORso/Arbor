@@ -326,11 +326,28 @@ export default function Home() {
 
         // Junction marker for move branches
         if (path.isMoveBranch) {
-          ctx.beginPath()
-          ctx.arc(path.startX, path.startY, 4, 0, Math.PI * 2)
-          ctx.fillStyle = isRelated ? '#c8a96e' : 'rgba(200, 169, 110, 0.6)'
-          ctx.fill()
-        }
+  // Junction dot
+  ctx.beginPath()
+  ctx.arc(path.startX, path.startY, 5, 0, Math.PI * 2)
+  ctx.fillStyle = '#0a0a08'
+  ctx.fill()
+  ctx.strokeStyle = isRelated ? '#c8a96e' : 'rgba(200, 169, 110, 0.7)'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  // Session label near junction
+  const branchSession = sessions.find(s => s.id === path.sessionId)
+  if (branchSession) {
+    const label = branchSession.seed_problem.length > 18
+      ? branchSession.seed_problem.slice(0, 18) + '...'
+      : branchSession.seed_problem
+    ctx.fillStyle = isRelated ? '#8a8578' : '#3a3a36'
+    ctx.font = '400 8px DM Mono, monospace'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, path.startX + 8, path.startY - 8)
+  }
+}
 
         for (let i = 0; i < path.points.length - 1; i++) {
           const from = path.points[i]
@@ -454,7 +471,7 @@ export default function Home() {
 
     animRef.current = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(animRef.current)
-  }, [seedNodes, moveNodes, rootPaths, selected, dimensions, zoom, pan])
+  }, [seedNodes, moveNodes, rootPaths, selected, dimensions, zoom, pan, sessions])
 
   const toWorld = (x: number, y: number) => ({ x: (x - pan.x) / zoom, y: (y - pan.y) / zoom })
 
