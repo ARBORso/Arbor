@@ -33,6 +33,7 @@ type RootPath = {
   isBranch: boolean
   isMoveBranch: boolean
   branchFromMoveId: string | null
+  session?: Session
 }
 
 export default function Home() {
@@ -49,6 +50,7 @@ export default function Home() {
   const animRef = useRef<number>(0)
   const seedNodesRef = useRef<SeedNode[]>([])
   const moveNodesRef = useRef<MoveNode[]>([])
+  const rootPathsRef = useRef<RootPath[]>([])
   const isPanning = useRef(false)
   const lastPan = useRef({ x: 0, y: 0 })
 
@@ -101,7 +103,6 @@ export default function Home() {
     let currentY = startY
     const segmentLength = isBranch ? 38 : 45
 
-    // If no moves yet, still add a stub point so the branch is visible
     if (moves.length === 0) {
       const stubX = currentX + segmentLength * Math.cos(currentAngle)
       const stubY = currentY + segmentLength * Math.sin(currentAngle)
@@ -178,7 +179,6 @@ export default function Home() {
       }
 
       const sessionMoves = moves.filter(m => m.session_id === s.id)
-      console.log('Session', s.id, 'found moves:', sessionMoves.length, 'total moves available:', moves.length)
       const { points, movePositions, moveAngles } = computeRootPath(
         startX, startY, startAngle, sessionMoves, i, isBranch
       )
@@ -192,6 +192,7 @@ export default function Home() {
         isBranch,
         isMoveBranch,
         branchFromMoveId: s.parent_move_id,
+        session: s,
       })
 
       sessionMoves.forEach((mv, j) => {
@@ -282,12 +283,14 @@ export default function Home() {
     setRootPaths(rp)
     seedNodesRef.current = sn
     moveNodesRef.current = mn
+    rootPathsRef.current = rp
   }, [sessions, allMoves, dimensions, computeLayout])
 
   useEffect(() => {
     seedNodesRef.current = seedNodes
     moveNodesRef.current = moveNodes
-  }, [seedNodes, moveNodes])
+    rootPathsRef.current = rootPaths
+  }, [seedNodes, moveNodes, rootPaths])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -312,11 +315,8 @@ export default function Home() {
       ctx.setLineDash([])
 
       // Root paths
-      rootPaths.forEach(path => {
+      rootPathsRef.current.forEach(path => {
         if (path.points.length < 2) return
-        if (path.isMoveBranch) {
-  console.log('Branch path points:', path.points, 'moves:', path.moves.length)
-}
         const isSessionSelected = selected?.kind === 'seed' && selected.id === path.sessionId
         const isMoveSelected = selected?.kind === 'move' && selected.sessionId === path.sessionId
         const isRelated = isSessionSelected || isMoveSelected
@@ -326,28 +326,31 @@ export default function Home() {
 
         // Junction marker for move branches
         if (path.isMoveBranch) {
-  // Junction dot
-  ctx.beginPath()
-  ctx.arc(path.startX, path.startY, 5, 0, Math.PI * 2)
-  ctx.fillStyle = '#0a0a08'
-  ctx.fill()
-  ctx.strokeStyle = isRelated ? '#c8a96e' : 'rgba(200, 169, 110, 0.7)'
-  ctx.lineWidth = 2
-  ctx.stroke()
-
-  // Session label near junction
-  const branchSession = sessions.find(s => s.id === path.sessionId)
-  if (branchSession) {
-    const label = branchSession.seed_problem.length > 18
-      ? branchSession.seed_problem.slice(0, 18) + '...'
-      : branchSession.seed_problem
-    ctx.fillStyle = isRelated ? '#8a8578' : '#3a3a36'
-    ctx.font = '400 8px DM Mono, monospace'
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(label, path.startX + 8, path.startY - 8)
-  }
-}
+          // Glow
+          ctx.beginPath()
+          ctx.arc(path.startX, path.startY, 10, 0, Math.PI * 2)
+          ctx.fillStyle = 'rgba(200, 169, 110, 0.15)'
+          ctx.fill()
+          // Dot
+          ctx.beginPath()
+          ctx.arc(path.startX, path.startY, 5, 0, Math.PI * 2)
+          ctx.fillStyle = isRelated ? '#c8a96e' : 'rgba(200, 169, 110, 0.7)'
+          ctx.fill()
+          // Label above junction
+          if (path.session) {
+            ctx.fillStyle = isRelated ? '#8a8578' : '#4a4a44'
+            ctx.font = '400 8px DM Mono, monospace'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'bottom'
+            ctx.fillText(
+              path.session.seed_problem.length > 18
+                ? path.session.seed_problem.slice(0, 18) + '...'
+                : path.session.seed_problem,
+              path.startX,
+              path.startY - 12
+            )
+          }
+        }
 
         for (let i = 0; i < path.points.length - 1; i++) {
           const from = path.points[i]
@@ -366,11 +369,10 @@ export default function Home() {
             ctx.lineTo(to.x, to.y)
           }
 
-          // Branches are more visible — golden color with opacity
           ctx.strokeStyle = isRelated
             ? color
             : path.isMoveBranch
-              ? 'rgba(138, 114, 72, 0.8)'
+              ? 'rgba(200, 169, 110, 0.5)'
               : 'rgba(42, 42, 38, 0.8)'
           ctx.lineWidth = width
           ctx.stroke()
@@ -394,13 +396,13 @@ export default function Home() {
       })
 
       // Move nodes
-      moveNodes.forEach(node => {
+      moveNodesRef.current.forEach(node => {
         const isSelected = selected?.id === node.id
         const parentSelected = (selected?.kind === 'seed' && selected.id === node.sessionId) ||
           (selected?.kind === 'move' && selected.sessionId === node.sessionId)
         const isDimmed = selected && !isSelected && !parentSelected
 
-        ctx.globalAlpha = isDimmed ? 0.1 : parentSelected ? 1 : 0.7
+        ctx.globalAlpha = isDimmed ? 0.1 : 1
 
         const color = MOVE_COLORS[node.move.move_type] || '#4a4a44'
 
@@ -422,7 +424,7 @@ export default function Home() {
       })
 
       // Seed nodes
-      seedNodes.forEach(node => {
+      seedNodesRef.current.forEach(node => {
         const isSelected = selected?.kind === 'seed' && selected.id === node.id
         const isDimmed = selected && selected.kind === 'seed' && selected.id !== node.id
 
@@ -471,7 +473,7 @@ export default function Home() {
 
     animRef.current = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(animRef.current)
-  }, [seedNodes, moveNodes, rootPaths, selected, dimensions, zoom, pan, sessions])
+  }, [selected, dimensions, zoom, pan])
 
   const toWorld = (x: number, y: number) => ({ x: (x - pan.x) / zoom, y: (y - pan.y) / zoom })
 
@@ -481,6 +483,14 @@ export default function Home() {
       Math.sqrt(((n.x - w.x) / 0.7) ** 2 + (n.y - w.y) ** 2) < n.radius + 8
     )
     if (seed) return seed
+    // Also check branch junction points
+    const branchPath = rootPathsRef.current.find(p =>
+      p.isMoveBranch && Math.sqrt((p.startX - w.x) ** 2 + (p.startY - w.y) ** 2) < 12
+    )
+    if (branchPath) {
+      const branchSeed = seedNodesRef.current.find(n => n.id === branchPath.sessionId)
+      if (branchSeed) return branchSeed
+    }
     return moveNodesRef.current.find(n =>
       Math.sqrt((n.x - w.x) ** 2 + (n.y - w.y) ** 2) < n.radius + 8
     )
