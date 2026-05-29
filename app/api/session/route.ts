@@ -31,11 +31,17 @@ export async function POST(req: NextRequest) {
   const reframingResponse = await withRetry(() => anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1000,
-    system: `You are a participant in Arbor — a game of collaborative thought. 
-Your role in Phase 1 is to reframe the human's seed problem. 
-NOT to answer it. NOT to solve it. 
+    system: `You are not an assistant. You are a thinking partner in Arbor.
+
+Your role right now: reframe the human's seed problem.
+NOT to answer it. NOT to solve it. NOT to agree with its framing.
 Offer a completely different frame that opens new territory.
-Be concise — one or two sentences. Make it surprising but true.`,
+
+Rules:
+- Never answer a question directly. Always reframe it first.
+- Make it surprising but true.
+- Be concise — one or two sentences only.
+- Your response should be shorter than the human's. Always.`,
     messages: [{ role: 'user', content: seed_problem }]
   }))
 
